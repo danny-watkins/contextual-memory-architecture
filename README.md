@@ -20,7 +20,7 @@ The vault is just markdown files with wikilinks. You can open it in Obsidian, ve
 
 ## Status
 
-**v0.2.0 - Phase 1-4 (Skeleton + Storage + Graph + Retrieval).** The Retriever is now functional: hybrid BM25 + (optional) embeddings + multi-hop graph traversal + paragraph-level fragment extraction.
+**v0.3.0 - Phases 1-7 functional.** All seven phases of the whitepaper are wired up. Retrieval, recording, MCP server, and an eval harness for the four-mode comparison are in place.
 
 | Phase | Description                                       | Status   |
 |-------|---------------------------------------------------|----------|
@@ -28,9 +28,9 @@ The vault is just markdown files with wikilinks. You can open it in Obsidian, ve
 | 2     | Markdown vault parser (frontmatter + wikilinks)   | done     |
 | 3     | Graph index + health report                       | done     |
 | 4     | Hybrid retrieval (BM25 + embeddings + graph)      | done     |
-| 5     | Recorder (completion packages, decisions)         | next     |
-| 6     | MCP server + adapters (Claude Code, LangGraph)    | planned  |
-| 7     | Evaluation harness + benchmarks                   | planned  |
+| 5     | Recorder (sessions, decisions, patterns, daily)   | done     |
+| 6     | MCP server (10 tools, stdio transport)            | done     |
+| 7     | Evaluation harness (Modes A/B/C/D, retrieval metrics) | done |
 
 ## Install
 
@@ -46,6 +46,12 @@ pip install -e ".[embeddings]"
 
 # Add OpenAI embeddings instead
 pip install -e ".[openai]"
+
+# Add MCP server support (for Claude Code integration)
+pip install -e ".[mcp]"
+
+# Everything
+pip install -e ".[all]"
 ```
 
 ## Quickstart
@@ -69,6 +75,15 @@ cma graph health
 # 6. Query the memory layer
 cma retrieve "what do we know about capital call processing?"
 cma retrieve "..." --json --save retriever/specs/CMA-001.json
+
+# 7. Record what an agent learned
+cma record path/to/completion_package.yaml
+
+# 8. Run a benchmark suite
+cma evals run examples/benchmark.yaml --mode graphrag
+
+# 9. Serve over MCP for Claude Code
+cma mcp serve --project .
 ```
 
 ### The training phase
@@ -146,21 +161,65 @@ The full whitepaper lives in `WHITEPAPER.md` (coming soon).
 ## Python API
 
 ```python
-from cma import Retriever, render_markdown
+from cma import Recorder, Retriever, render_markdown
+from cma.schemas import CompletionPackage, Decision
 
+# Retrieval
 retriever = Retriever.from_project("./my-agent")
 spec = retriever.retrieve(
     "what do we know about capital call processing?",
     max_depth=2,
     beam_width=5,
 )
-
-# Use the structured form
 for frag in spec.fragments:
     print(frag.source_node, frag.node_score, frag.text[:100])
+print(render_markdown(spec))  # inspectable markdown form
 
-# Or render as inspectable markdown to commit to vault/008-context-specs/
-print(render_markdown(spec))
+# Recording
+recorder = Recorder.from_project("./my-agent")
+package = CompletionPackage(
+    task_id="CMA-2026-0001",
+    goal="Diagnose slow processing",
+    summary="Synchronous fund-admin API in hot path",
+    decisions=[Decision(
+        title="Move to async queue",
+        status="accepted",
+        confidence=0.86,
+        rationale="Queue isolates external API latency from request path",
+    )],
+)
+result = recorder.record_completion(package)
+print(result.summary())
+```
+
+## MCP server
+
+CMA exposes ten tools over MCP for any agent that speaks the protocol (Claude Code, the Anthropic SDK, etc.):
+
+**Graph primitives** (composable, fine-grained):
+- `search_notes` - hybrid search returning top-k matches
+- `get_note` - fetch full note content
+- `get_outgoing_links` / `get_backlinks` - follow wikilinks
+- `traverse_graph` - notes within N hops
+- `search_by_frontmatter` - filter by YAML metadata
+
+**Higher-level orchestrators** (one-shot):
+- `retrieve` - full Retriever pipeline returning a markdown Context Spec
+- `record_completion` - Recorder ingestion
+- `graph_health` - graph health report
+- `reindex` - refresh the in-memory index after vault changes
+
+To wire into Claude Code, add to `~/.claude/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "cma": {
+      "command": "cma",
+      "args": ["mcp", "serve", "--project", "/absolute/path/to/your/cma-project"]
+    }
+  }
+}
 ```
 
 ## Design principles

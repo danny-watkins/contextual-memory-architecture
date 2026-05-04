@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import pickle
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -581,20 +582,115 @@ def graph_health(
         console.print(broken_table)
 
 
-# -------- placeholder for Phase 6 --------
+# -------- evals --------
+
+evals_app = typer.Typer(
+    name="evals", help="Run benchmark queries against the CMA project.", no_args_is_help=True
+)
+app.add_typer(evals_app, name="evals")
 
 
-@app.command(hidden=True)
-def mcp(
-    action: str = typer.Argument("serve"),
+@evals_app.command("run")
+def evals_run(
+    benchmark: Path = typer.Argument(..., help="Path to a benchmark YAML/JSON file."),
     project_path: Path = typer.Option(Path("."), "--project", "-p"),
+    mode: str = typer.Option(
+        "graphrag",
+        "--mode",
+        help="Retrieval mode: no_memory | vector_only | graphrag | full_cma",
+    ),
+    save: Path = typer.Option(None, "--save", help="Write the run report as JSON."),
 ) -> None:
-    """MCP server (Phase 6) - not yet implemented."""
-    console.print(
-        "[yellow]MCP server is not yet implemented (Phase 6).[/yellow]\n"
-        "For now, integrate via the Python SDK or `cma retrieve`."
-    )
-    raise typer.Exit(code=2)
+    """Run a benchmark suite and report retrieval-quality metrics."""
+    from cma.evals import RetrievalMode
+    from cma.evals.runner import load_benchmark_queries, run_benchmark
+
+    project_path = Path(project_path).resolve()
+    queries = load_benchmark_queries(Path(benchmark))
+    try:
+        retrieval_mode = RetrievalMode(mode)
+    except ValueError:
+        console.print(f"[red]Unknown mode: {mode}[/red]")
+        raise typer.Exit(code=2)
+
+    run = run_benchmark(project_path, queries, mode=retrieval_mode)
+    agg = run.aggregate()
+
+    summary = Table(title=f"Benchmark Run ({mode})", show_header=False, box=None)
+    for k, v in agg.items():
+        summary.add_row(k, f"{v:.4f}" if isinstance(v, float) else str(v))
+    console.print(summary)
+
+    if save:
+        save_path = Path(save)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "mode": run.mode.value,
+            "project_path": str(run.project_path),
+            "started_at": run.started_at.isoformat(),
+            "aggregate": agg,
+            "results": [
+                {
+                    "query": r.query,
+                    "retrieved": r.retrieved_record_ids,
+                    "expected": r.expected_record_ids,
+                    "recall_at_5": r.recall_at_5,
+                    "precision_at_5": r.precision_at_5,
+                    "n_fragments": r.n_fragments,
+                    "n_unique_sources": r.n_unique_sources,
+                    "token_estimate": r.raw_spec_token_estimate,
+                }
+                for r in run.results
+            ],
+        }
+        save_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        console.print(f"[dim]Saved benchmark report -> {save_path}[/dim]")
+
+
+# -------- mcp server --------
+
+mcp_app = typer.Typer(name="mcp", help="MCP server for agent integration.", no_args_is_help=True)
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("serve")
+def mcp_serve(
+    project_path: Path = typer.Option(
+        Path("."), "--project", "-p", help="Path to the CMA project."
+    ),
+) -> None:
+    """Start the CMA MCP server over stdio.
+
+    Use with Claude Code by adding to your MCP config (~/.claude/mcp.json):
+
+        {
+          "mcpServers": {
+            "cma": {
+              "command": "cma",
+              "args": ["mcp", "serve", "--project", "/path/to/project"]
+            }
+          }
+        }
+
+    Requires: pip install 'contextual-memory-architecture[mcp]'
+    """
+    project_path = Path(project_path).resolve()
+    if not (project_path / "cma.config.yaml").exists():
+        # Status messages must go to stderr so they don't corrupt the stdio JSON-RPC stream.
+        print(f"[red]No cma.config.yaml at {project_path}.[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    try:
+        from cma.mcp.server import run_server
+    except ImportError as e:
+        print(
+            f"[red]MCP support not installed:[/red] {e}\n"
+            "Install with: pip install 'contextual-memory-architecture[mcp]'",
+            file=sys.stderr,
+        )
+        raise typer.Exit(code=1)
+
+    run_server(project_path)
 
 
 if __name__ == "__main__":

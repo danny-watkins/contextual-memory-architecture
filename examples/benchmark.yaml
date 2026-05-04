@@ -1,0 +1,29 @@
+# Example benchmark suite for `cma evals run`.
+#
+# Each query has expected_records (filename stems of notes that should be
+# retrieved) and optional tags for slicing the suite by query type.
+#
+# Run against the example vault:
+#   cma init demo
+#   cp -r examples/example_vault/* demo/vault/
+#   cma evals run examples/benchmark.yaml --project demo --mode graphrag
+
+queries:
+  - query: capital call processing performance
+    expected_records:
+      - Async Capital Call Processing
+      - Queue Retry Pattern
+    tags: [multi-hop, decision]
+    notes: Direct decision plus the linked pattern.
+
+  - query: external API synchronous bottleneck
+    expected_records:
+      - External API Synchronous Bottleneck
+      - Queue Retry Pattern
+    tags: [multi-hop, pattern]
+    notes: Anti-pattern note plus its mitigation pattern.
+
+  - query: queue retry pattern
+    expected_records:
+      - Queue Retry Pattern
+    tags: [single-hop, pattern]
