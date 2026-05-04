@@ -3,6 +3,7 @@
 __version__ = "0.2.0"
 
 from cma.config import CMAConfig, RecorderConfig, RetrievalConfig
+from cma.recorder import Recorder, RecorderResult, WriteDecision
 from cma.retriever import (
     BM25Index,
     Embedder,
@@ -56,6 +57,9 @@ __all__ = [
     "extract_wikilinks",
     "build_graph",
     "graph_health_report",
+    "Recorder",
+    "RecorderResult",
+    "WriteDecision",
     "Retriever",
     "Embedder",
     "EmbedderUnavailable",

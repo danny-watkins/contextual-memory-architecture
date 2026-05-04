@@ -17,6 +17,7 @@ from rich.table import Table
 
 from cma import __version__
 from cma.config import CMAConfig
+from cma.recorder import Recorder
 from cma.retriever import EmbedderUnavailable, Retriever, get_embedder, render_markdown
 from cma.retriever.embeddings import EmbeddingIndex
 from cma.retriever.lexical import BM25Index
@@ -458,6 +459,74 @@ def setup(
     console.print(
         "\n[bold]Next:[/bold] [cyan]cma index[/cyan] to train the memory graph."
     )
+
+
+# -------- record --------
+
+
+@app.command()
+def record(
+    completion_package: Path = typer.Argument(
+        ..., help="Path to a completion package YAML or JSON file."
+    ),
+    project_path: Path = typer.Option(
+        Path("."), "--project", "-p", help="Path to the CMA project."
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show what would be written without writing."
+    ),
+) -> None:
+    """Ingest a completion package and write structured memory back to the vault."""
+    project_path = Path(project_path).resolve()
+    if not (project_path / "cma.config.yaml").exists():
+        console.print(
+            f"[red]No cma.config.yaml at {project_path}. Run `cma init` first.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    package_path = Path(completion_package).resolve()
+    if not package_path.exists():
+        console.print(f"[red]Completion package not found: {package_path}[/red]")
+        raise typer.Exit(code=1)
+
+    recorder = Recorder.from_project(project_path)
+    package = Recorder.load_completion_package(package_path)
+    result = recorder.record_completion(package, dry_run=dry_run)
+
+    summary = Table(title="Recorder Result", show_header=False, box=None)
+    summary.add_row("Task ID", package.task_id)
+    summary.add_row("Written", str(len(result.written)))
+    summary.add_row("Proposed", str(len(result.proposed)))
+    summary.add_row("Skipped", str(len(result.skipped)))
+    summary.add_row("Mode", "DRY RUN" if dry_run else "live")
+    console.print(summary)
+
+    if result.written:
+        t = Table(title="Written")
+        t.add_column("Path")
+        for p in result.written:
+            t.add_row(str(p))
+        console.print(t)
+
+    if result.proposed:
+        t = Table(title="Proposed (need human approval)")
+        t.add_column("Path")
+        for p in result.proposed:
+            t.add_row(str(p))
+        console.print(t)
+
+    if result.skipped:
+        t = Table(title="Skipped")
+        t.add_column("Item")
+        t.add_column("Reason")
+        for label, reason in result.skipped:
+            t.add_row(label, reason)
+        console.print(t)
+
+    if not dry_run and result.written:
+        console.print(
+            "\n[dim]Tip: run `cma index` to refresh BM25/embeddings so new notes are retrievable.[/dim]"
+        )
 
 
 # -------- graph commands --------
