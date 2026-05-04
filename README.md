@@ -6,6 +6,8 @@ CMA is a memory architecture small enough to live next to a single agent. Each a
 
 **Repository promise: add a persistent contextual memory layer to your agent without rewriting your agent.**
 
+**Docs:** [Technical Whitepaper (PDF)](docs/CMA_Whitepaper_v0.4.pdf) · [Intro Slideshow (PDF)](docs/CMA_Slideshow_v0.4.pdf)
+
 ## Why
 
 Most AI agents are stateless. They forget prior decisions, project conventions, what worked, and what failed. Standard RAG helps a little, but agent memory is relational and cumulative - the most useful context isn't the nearest vector chunk, it's a decision linked to a project or a postmortem linked to a failure mode.
