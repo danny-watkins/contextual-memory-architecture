@@ -1,8 +1,8 @@
 # Contextual Memory Architecture (CMA)
 
-> A local-first, Obsidian-compatible memory layer for persistent AI agents.
+> A lightweight memory layer each agent carries with it. Local-first, Obsidian-compatible, fractal-by-design.
 
-CMA is a drop-in memory layer you can add to any agent. Each agent gets its own local Obsidian-compatible vault, a graph-aware retrieval engine, and a structured way to record what it learns - so the next task starts smarter than the last.
+CMA is a memory architecture small enough to live next to a single agent. Each agent gets its own Obsidian-compatible vault, a graph-aware retrieval engine, and a structured way to record what it learns - so the next task starts smarter than the last. No shared cloud brain, no central server, no cross-agent contamination by default.
 
 **Repository promise: add a persistent contextual memory layer to your agent without rewriting your agent.**
 
@@ -17,6 +17,16 @@ CMA reframes memory as three intelligent functions:
 - **Recorder** - converts completed work into structured, durable memory
 
 The vault is just markdown files with wikilinks. You can open it in Obsidian, version it with git, and grep it from the command line. Indexes are derived and rebuildable - delete `.cma/` and rebuild from the vault any time.
+
+## Lightweight, per-agent, fractal-by-design
+
+CMA is meant to be the memory layer a single agent **carries with it** - small enough that every agent in a system can have its own.
+
+- **Per-agent vaults are the unit.** An agent's vault holds its own decisions, sessions, patterns, and project context. Two agents working in the same system don't pollute each other's memory; their experiences stay separate unless explicitly shared.
+- **The architecture is fractal.** A vault is a graph of notes. Nothing stops a vault itself from becoming a single node in a larger graph - a system-level or network-level memory graph that links agents instead of notes. The same primitives (graph traversal, hybrid search, fragment extraction, context spec assembly) apply at any scale.
+- **What that unlocks (future direction).** Multi-agent systems where the Retriever traverses across agent boundaries when context demands it. Cross-agent provenance. Network-wide pattern recognition. Selective memory federation - one agent loaning a slice of its graph to another for the duration of a task. CMA v0.3 is the per-agent foundation; the fractal layer is on the roadmap.
+
+The local-first, markdown-as-canonical design exists precisely so this composes cleanly: a vault is a portable artifact, an MCP server is a portable interface, and a graph of vaults is just another graph.
 
 ## Status
 
@@ -108,7 +118,7 @@ Re-running is cheap and idempotent. The whole `.cma/` directory is rebuildable f
 
 `cma setup` walks you through connecting CMA to your agent. The three options:
 
-1. **Claude Code (MCP)** - the recommended path for most users. Phase 6 will ship an MCP server you register in your Claude Code config; for now it prints the snippet you'll paste once Phase 6 lands.
+1. **Claude Code (MCP)** - the recommended path for most users. Register the CMA MCP server in your Claude Code config; the agent calls retrieve/record/graph tools directly during a session. See [MCP server](#mcp-server) below.
 2. **Python SDK** - import `cma` directly in your agent code. See [Python API](#python-api).
 3. **Generic CLI** - shell out to `cma retrieve` from any agent framework.
 
@@ -224,10 +234,12 @@ To wire into Claude Code, add to `~/.claude/mcp.json`:
 
 ## Design principles
 
+- **Lightweight.** Small enough to live next to a single agent; pure-Python core, no daemons, no schema migrations.
+- **Per-agent memory.** Each agent gets its own vault. No shared global brain by default.
+- **Fractal-ready.** A vault is a graph of notes; a graph of vaults is just another graph. Same primitives compose upward.
 - **Local-first.** No server, no cloud (unless you opt into OpenAI embeddings). The vault is yours.
 - **Inspectable.** Memory is markdown. Open it in Obsidian, grep it, version it.
-- **Framework-agnostic.** CLI, Python SDK, and (Phase 6) MCP. Bring your own agent.
-- **Per-agent memory.** Each agent gets its own vault. No shared global brain.
+- **Framework-agnostic.** CLI, Python SDK, MCP. Bring your own agent.
 - **Rebuildable indexes.** `.cma/` is derived state. Canonical truth is markdown.
 - **Pluggable embeddings.** Default is local sentence-transformers; OpenAI is a one-line config swap; or implement the `Embedder` protocol for your own.
 
