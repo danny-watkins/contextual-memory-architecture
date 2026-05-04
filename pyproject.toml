@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "contextual-memory-architecture"
+version = "0.1.0"
+description = "A local-first, Obsidian-compatible memory layer for persistent AI agents"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Danny Watkins", email = "dannywatkins13@gmail.com"},
+]
+keywords = ["ai", "agent", "memory", "obsidian", "rag", "graphrag", "context"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pydantic>=2.0",
+    "typer>=0.9",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.0",
+    "networkx>=3.0",
+    "rich>=13.0",
+    "numpy>=1.24",
+    "rank-bm25>=0.2.2",
+]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=2.2"]
+openai = ["openai>=1.0"]
+all = ["sentence-transformers>=2.2", "openai>=1.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1",
+]
+
+[project.scripts]
+cma = "cma.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cma"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
