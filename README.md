@@ -30,7 +30,7 @@ The local-first, markdown-as-canonical design exists precisely so this composes 
 
 ## Status
 
-**v0.3.0 - Phases 1-7 functional.** All seven phases of the whitepaper are wired up. Retrieval, recording, MCP server, and an eval harness for the four-mode comparison are in place.
+**v0.3.0 - Phases 1-9 functional.** Retrieval, recording, MCP server, eval harness, memory health observability, and lifecycle curation (archive + supersede) are all wired up.
 
 | Phase | Description                                       | Status   |
 |-------|---------------------------------------------------|----------|
@@ -41,6 +41,8 @@ The local-first, markdown-as-canonical design exists precisely so this composes 
 | 5     | Recorder (sessions, decisions, patterns, daily)   | done     |
 | 6     | MCP server (10 tools, stdio transport)            | done     |
 | 7     | Evaluation harness (Modes A/B/C/D, retrieval metrics) | done |
+| 8     | Memory health + observability (`cma health`, retrieval log, context % gauge) | done |
+| 9     | Memory lifecycle (`cma archive`, `cma supersede`) | done     |
 
 ## Install
 
@@ -94,6 +96,13 @@ cma evals run examples/benchmark.yaml --mode graphrag
 
 # 9. Serve over MCP for Claude Code
 cma mcp serve --project .
+
+# 10. Inspect memory health (vault size, index footprint, graph density, retrieval activity)
+cma health
+
+# 11. Curate cold memory (archive cold patterns older than 90 days, dry run first)
+cma archive --type pattern --older-than 90 --dry-run
+cma supersede "Old Decision" --by "New Decision"
 ```
 
 ### The training phase
@@ -231,6 +240,43 @@ To wire into Claude Code, add to `~/.claude/mcp.json`:
   }
 }
 ```
+
+## Memory health and scaling
+
+You cannot have infinite learned memory. CMA gives you the dashboards and the curation tools to keep memory honest.
+
+**`cma health`** reports four things at a glance:
+
+- **Vault size** — total notes, bytes on disk, breakdown by folder
+- **Index footprint** — graph + BM25 + embedding bytes (so you can see what `.cma/` actually costs)
+- **Graph density** — nodes, edges, average out-degree, orphan rate, broken-link rate
+- **Retrieval activity** — total events, last-7-day rate, most-retrieved notes, never-retrieved count
+
+It also flags soft warnings when you cross thresholds: vault > 50K notes, embeddings > 200 MB, orphan rate > 30%, broken-link rate > 5%, never-retrieved rate > 70% (when you have actual retrieval history).
+
+**Context budget gauge** runs after every `cma retrieve` so you can see how much of the 8K-token default budget the spec actually consumed:
+
+```
+Context budget [#######-----------------------]  1,847 / 8,000 tokens (23%)  | 6 fragments from 4 notes
+```
+
+**Retrieval logging** is automatic. Every `retrieve()` call appends a JSON line to `.cma/state/retrieval_log.jsonl` with timestamp, query, fragment count, token estimate, and the notes that surfaced. Health reports compute "never retrieved" and "most retrieved" off this log.
+
+**Curation tools** (Phase 9):
+
+- `cma archive --type pattern --older-than 90` — moves cold pattern notes older than 90 days into `vault/011-archive/` and sets their frontmatter `status: archived`. Use `--dry-run` to preview. Filter by `--type` and `--status`. Cold-ness is measured against the retrieval log; notes with no retrieval history fall back to their `created` frontmatter date. Notes with no signal at all are skipped (we won't blindly archive what we can't date).
+- `cma supersede "Old Decision" --by "New Decision"` — marks the old decision as superseded, adds `superseded_by` and `superseded_at` to its frontmatter, and appends a `[[New Decision]]` link to its body. Both notes must already exist.
+
+**Realistic per-vault scaling** (single agent, single laptop):
+
+| Vault size | Markdown | Embeddings (MiniLM 384d) | RAM at runtime | Query latency |
+|---|---|---|---|---|
+| 1K notes | ~10 MB | ~1.5 MB | ~50 MB | <50 ms |
+| 10K notes | ~100 MB | ~15 MB | ~250 MB | <100 ms |
+| 100K notes | ~1 GB | ~150 MB | ~1.5 GB | ~500 ms |
+| 1M notes | ~10 GB | ~1.5 GB | ~10+ GB | seconds (would need ANN) |
+
+For long-lived agents that write daily, you want to combine `cma archive` (drop cold notes), `cma supersede` (mark stale decisions), and the fractal model (shard by domain when one vault gets big) rather than letting any single graph grow without bound.
 
 ## Design principles
 

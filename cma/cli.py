@@ -18,6 +18,8 @@ from rich.table import Table
 
 from cma import __version__
 from cma.config import CMAConfig
+from cma.health import health_report
+from cma.lifecycle import archive_cold_notes, supersede_decision
 from cma.recorder import Recorder
 from cma.retriever import EmbedderUnavailable, Retriever, get_embedder, render_markdown
 from cma.retriever.embeddings import EmbeddingIndex
@@ -327,6 +329,21 @@ def retrieve(
             save_path.write_text(render_markdown(spec), encoding="utf-8")
         console.print(f"[dim]Saved context spec -> {save_path}[/dim]")
 
+    # Context % gauge: how much of the configured token budget did this spec consume?
+    config = CMAConfig.from_project(project_path)
+    token_budget = 8000  # default - mirrors the ContextRequest schema default
+    used_tokens = sum(len(f.text) for f in spec.fragments) // 4
+    pct = (used_tokens / token_budget * 100) if token_budget else 0.0
+    bar_width = 30
+    filled = min(bar_width, int(pct / 100 * bar_width))
+    bar = "[" + "#" * filled + "-" * (bar_width - filled) + "]"
+    color = "green" if pct < 60 else "yellow" if pct < 90 else "red"
+    console.print(
+        f"\n[bold]Context budget[/bold] {bar} "
+        f"[{color}]{used_tokens:,} / {token_budget:,} tokens ({pct:.0f}%)[/{color}]  "
+        f"| {len(spec.fragments)} fragments from {len({f.source_node for f in spec.fragments})} notes"
+    )
+
 
 # -------- setup helper --------
 
@@ -580,6 +597,187 @@ def graph_health(
         for bl in report["broken_links"][:50]:
             broken_table.add_row(bl["source"], bl["target"])
         console.print(broken_table)
+
+
+# -------- health --------
+
+
+def _format_bytes(n: int) -> str:
+    for unit in ["B", "KB", "MB", "GB"]:
+        if n < 1024:
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} B"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+@app.command()
+def health(
+    project_path: Path = typer.Argument(Path("."), help="Path to the CMA project."),
+    json_output: bool = typer.Option(False, "--json", help="Print the report as JSON."),
+) -> None:
+    """Memory health report: vault size, index footprint, graph density, retrieval activity."""
+    project_path = Path(project_path).resolve()
+    if not (project_path / "cma.config.yaml").exists():
+        console.print(f"[red]No cma.config.yaml at {project_path}.[/red]")
+        raise typer.Exit(code=1)
+
+    report = health_report(project_path)
+
+    if json_output:
+        console.print(json.dumps(report, indent=2, default=str))
+        return
+
+    # Vault
+    v = report["vault"]
+    vault_table = Table(title="Vault", show_header=False, box=None)
+    vault_table.add_row("Total notes", f"{v['total_notes']:,}")
+    vault_table.add_row("Total size", _format_bytes(v["total_bytes"]))
+    console.print(vault_table)
+
+    if v["by_folder"]:
+        bf = Table(title="By Folder", show_header=True)
+        bf.add_column("Folder")
+        bf.add_column("Notes", justify="right")
+        bf.add_column("Size", justify="right")
+        for folder, stats in v["by_folder"].items():
+            bf.add_row(folder, str(stats["notes"]), _format_bytes(stats["bytes"]))
+        console.print(bf)
+
+    # Indexes
+    idx = report["indexes"]
+    idx_table = Table(title="Indexes (.cma/)", show_header=True)
+    idx_table.add_column("Index")
+    idx_table.add_column("Size", justify="right")
+    idx_table.add_column("Detail")
+    idx_table.add_row("graph", _format_bytes(idx["graph"]["bytes"]), "")
+    idx_table.add_row("bm25", _format_bytes(idx["bm25"]["bytes"]), "")
+    emb = idx["embeddings"]
+    emb_detail = (
+        f"{emb['n_docs']} docs x {emb['dim']} dims ({emb['model']})"
+        if emb["n_docs"]
+        else "(not built)"
+    )
+    idx_table.add_row("embeddings", _format_bytes(emb["bytes"]), emb_detail)
+    idx_table.add_row("[bold]total derived[/bold]", _format_bytes(idx["total_derived_bytes"]), "")
+    console.print(idx_table)
+
+    # Graph
+    g = report["graph"]
+    g_table = Table(title="Graph", show_header=False, box=None)
+    g_table.add_row("Nodes", str(g["total_nodes"]))
+    g_table.add_row("Edges", str(g["total_edges"]))
+    g_table.add_row("Avg out-degree", f"{g['average_out_degree']:.2f}")
+    g_table.add_row("Orphans", f"{g['orphans']} ({g['orphan_rate']:.1%})")
+    g_table.add_row("Broken links", f"{g['broken_links']} ({g['broken_link_rate']:.1%})")
+    console.print(g_table)
+
+    # Retrieval
+    r = report["retrieval"]
+    r_table = Table(title="Retrieval Activity", show_header=False, box=None)
+    r_table.add_row("Total events", str(r["total_events"]))
+    r_table.add_row("Last 7 days", str(r["events_last_7d"]))
+    r_table.add_row("Never retrieved", f"{r['never_retrieved']} ({r['never_retrieved_rate']:.1%})")
+    console.print(r_table)
+
+    if r["most_retrieved"]:
+        mr = Table(title="Most Retrieved", show_header=True)
+        mr.add_column("Note")
+        mr.add_column("Hits", justify="right")
+        for note, hits in r["most_retrieved"]:
+            mr.add_row(str(note), str(hits))
+        console.print(mr)
+
+    # Warnings
+    if report["warnings"]:
+        console.print("\n[bold yellow]Warnings:[/bold yellow]")
+        for w in report["warnings"]:
+            console.print(f"  [yellow]![/yellow] {w}")
+    else:
+        console.print("\n[green]All metrics within healthy thresholds.[/green]")
+
+
+# -------- archive / supersede --------
+
+
+@app.command()
+def archive(
+    older_than: int = typer.Option(
+        None, "--older-than", help="Archive notes whose last activity is older than N days."
+    ),
+    note_type: str = typer.Option(None, "--type", help="Only archive notes of this type."),
+    only_status: str = typer.Option(
+        None, "--status", help="Only archive notes with this status."
+    ),
+    project_path: Path = typer.Option(Path("."), "--project", "-p"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without moving files."),
+) -> None:
+    """Move cold notes into vault/011-archive/ and mark them archived."""
+    project_path = Path(project_path).resolve()
+    if not (project_path / "cma.config.yaml").exists():
+        console.print(f"[red]No cma.config.yaml at {project_path}.[/red]")
+        raise typer.Exit(code=1)
+
+    if older_than is None and note_type is None and only_status is None:
+        console.print(
+            "[red]Refusing to archive everything.[/red] "
+            "Specify at least one filter: --older-than, --type, or --status."
+        )
+        raise typer.Exit(code=2)
+
+    result = archive_cold_notes(
+        project_path,
+        older_than_days=older_than,
+        note_type=note_type,
+        only_status=only_status,
+        dry_run=dry_run,
+    )
+
+    summary = Table(title="Archive Result", show_header=False, box=None)
+    summary.add_row("Mode", "DRY RUN" if dry_run else "live")
+    summary.add_row("Moved", str(len(result.moved)))
+    summary.add_row("Skipped", str(len(result.skipped)))
+    console.print(summary)
+
+    if result.moved:
+        t = Table(title="Moved" if not dry_run else "Would move")
+        t.add_column("From")
+        t.add_column("To")
+        for src, dst in result.moved:
+            t.add_row(str(src), str(dst))
+        console.print(t)
+
+    if result.skipped:
+        t = Table(title="Skipped")
+        t.add_column("Note")
+        t.add_column("Reason")
+        for note, reason in result.skipped:
+            t.add_row(note, reason)
+        console.print(t)
+
+
+@app.command()
+def supersede(
+    old_title: str = typer.Argument(..., help="Title of the note being superseded."),
+    by: str = typer.Option(..., "--by", help="Title of the note that supersedes it."),
+    project_path: Path = typer.Option(Path("."), "--project", "-p"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Mark a decision as superseded by a newer one (updates frontmatter + adds wikilink)."""
+    project_path = Path(project_path).resolve()
+    if not (project_path / "cma.config.yaml").exists():
+        console.print(f"[red]No cma.config.yaml at {project_path}.[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        path = supersede_decision(project_path, old_title, by, dry_run=dry_run)
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        console.print(f"[yellow]DRY RUN[/yellow]: would supersede [bold]{old_title}[/bold] by [bold]{by}[/bold]")
+    else:
+        console.print(f"[green]Superseded[/green] [bold]{old_title}[/bold] -> [bold]{by}[/bold]\n[dim]Updated: {path}[/dim]")
 
 
 # -------- evals --------

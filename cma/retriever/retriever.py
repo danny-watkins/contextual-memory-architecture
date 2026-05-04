@@ -44,12 +44,14 @@ class Retriever:
         graph,
         config: RetrievalConfig | None = None,
         embedder: Embedder | None = None,
+        project_path: Path | None = None,
     ) -> None:
         self.records = records
         self.records_by_id: dict[str, MemoryRecord] = {r.record_id: r for r in records}
         self.graph = graph
         self.config = config or RetrievalConfig()
         self.embedder = embedder
+        self.project_path = Path(project_path).resolve() if project_path else None
         self.bm25 = BM25Index(records)
         self.embedding_index: EmbeddingIndex | None = (
             EmbeddingIndex.build(records, embedder) if embedder else None
@@ -82,7 +84,13 @@ class Retriever:
         else:
             resolved = embedder
 
-        return cls(records=records, graph=graph, config=config.retrieval, embedder=resolved)
+        return cls(
+            records=records,
+            graph=graph,
+            config=config.retrieval,
+            embedder=resolved,
+            project_path=Path(project_path).resolve(),
+        )
 
     # ----- internals -----
 
@@ -268,7 +276,7 @@ class Retriever:
             "max_fragments_per_node": max_fragments_per_node,
             "embedder": self.embedder.name if self.embedder else "none",
         }
-        return build_context_spec(
+        spec = build_context_spec(
             task_id=task_id or "ad-hoc",
             query=query,
             parameters=params,
@@ -276,6 +284,24 @@ class Retriever:
             relationship_map=relationship_map,
             retriever_version=__version__,
         )
+        if self.project_path is not None:
+            try:
+                from cma.health.report import log_retrieval
+
+                token_est = sum(len(f.text) for f in spec.fragments) // 4
+                log_retrieval(
+                    self.project_path,
+                    spec_id=spec.spec_id,
+                    task_id=spec.task_id,
+                    query=query,
+                    fragment_titles=list({f.source_node for f in spec.fragments}),
+                    token_estimate=token_est,
+                    fragment_count=len(spec.fragments),
+                )
+            except Exception:
+                # Logging is best-effort; never break a retrieve because the log dir is bad.
+                pass
+        return spec
 
 
 def _why_included(record: MemoryRecord, depth: int, score: float) -> str:
