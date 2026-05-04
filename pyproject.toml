@@ -4,14 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contextual-memory-architecture"
-version = "0.1.0"
-description = "A local-first, Obsidian-compatible memory layer for persistent AI agents"
+dynamic = ["version"]
+description = "A lightweight, local-first, Obsidian-compatible memory layer that each agent carries with it"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.10"
 authors = [
     {name = "Danny Watkins", email = "dannywatkins13@gmail.com"},
 ]
+urls = {Homepage = "https://github.com/danny-watkins/contextual-memory-architecture", Repository = "https://github.com/danny-watkins/contextual-memory-architecture", Issues = "https://github.com/danny-watkins/contextual-memory-architecture/issues"}
 keywords = ["ai", "agent", "memory", "obsidian", "rag", "graphrag", "context"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -48,6 +49,9 @@ dev = [
 
 [project.scripts]
 cma = "cma.cli:app"
+
+[tool.hatch.version]
+path = "cma/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cma"]
