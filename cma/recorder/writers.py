@@ -52,6 +52,7 @@ def write_decision(
     *,
     status_override: str | None = None,
     proposal_dir: Path | None = None,
+    related_titles: list[str] | None = None,
 ) -> tuple[Path | None, str]:
     """Write a decision note. Returns (path, status_label).
 
@@ -59,7 +60,11 @@ def write_decision(
     with the same title already exists in the vault decisions folder, returns
     (None, "duplicate") without overwriting.
     """
-    rendered = render_decision(decision, package, status_override=status_override)
+    rendered = render_decision(
+        decision, package,
+        status_override=status_override,
+        related_titles=related_titles,
+    )
     if proposal_dir is not None:
         proposal_dir.mkdir(parents=True, exist_ok=True)
         path = proposal_dir / f"{sanitize_filename(decision.title)}.md"
@@ -82,9 +87,14 @@ def write_pattern(
     *,
     status_override: str | None = None,
     proposal_dir: Path | None = None,
+    related_titles: list[str] | None = None,
 ) -> tuple[Path | None, str]:
     """Write a pattern note. Returns (path, status_label)."""
-    rendered = render_pattern(pattern, package, status_override=status_override)
+    rendered = render_pattern(
+        pattern, package,
+        status_override=status_override,
+        related_titles=related_titles,
+    )
     if proposal_dir is not None:
         proposal_dir.mkdir(parents=True, exist_ok=True)
         path = proposal_dir / f"{sanitize_filename(pattern.title)}.md"

@@ -1,0 +1,142 @@
+{
+  "collapse-filter": true,
+  "search": "",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": false,
+  "showOrphans": true,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "[\"cma_active\":true]",
+      "color": {
+        "a": 1,
+        "rgb": 16766208
+      }
+    },
+    {
+      "query": "[\"type\":\"context_spec\"]",
+      "color": {
+        "a": 1,
+        "rgb": 15680580
+      }
+    },
+    {
+      "query": "[\"retrieve_count\":>=10]",
+      "color": {
+        "a": 1,
+        "rgb": 2278750
+      }
+    },
+    {
+      "query": "[\"retrieve_count\":>=5]",
+      "color": {
+        "a": 1,
+        "rgb": 4906624
+      }
+    },
+    {
+      "query": "[\"retrieve_count\":>=1]",
+      "color": {
+        "a": 1,
+        "rgb": 8843180
+      }
+    },
+    {
+      "query": "path:001-projects",
+      "color": {
+        "a": 1,
+        "rgb": 3900150
+      }
+    },
+    {
+      "query": "path:002-sessions",
+      "color": {
+        "a": 1,
+        "rgb": 440020
+      }
+    },
+    {
+      "query": "path:003-decisions",
+      "color": {
+        "a": 1,
+        "rgb": 1096065
+      }
+    },
+    {
+      "query": "path:004-patterns",
+      "color": {
+        "a": 1,
+        "rgb": 9133302
+      }
+    },
+    {
+      "query": "path:005-people",
+      "color": {
+        "a": 1,
+        "rgb": 15485081
+      }
+    },
+    {
+      "query": "path:006-tools",
+      "color": {
+        "a": 1,
+        "rgb": 16096779
+      }
+    },
+    {
+      "query": "path:007-codebase",
+      "color": {
+        "a": 1,
+        "rgb": 16347926
+      }
+    },
+    {
+      "query": "path:009-evals",
+      "color": {
+        "a": 1,
+        "rgb": 6514417
+      }
+    },
+    {
+      "query": "path:010-daily-log",
+      "color": {
+        "a": 1,
+        "rgb": 1357990
+      }
+    },
+    {
+      "query": "path:011-archive",
+      "color": {
+        "a": 1,
+        "rgb": 4674921
+      }
+    },
+    {
+      "query": "path:020-sources",
+      "color": {
+        "a": 1,
+        "rgb": 6583435
+      }
+    },
+    {
+      "query": "path:000-inbox",
+      "color": {
+        "a": 1,
+        "rgb": 9741240
+      }
+    }
+  ],
+  "collapse-display": true,
+  "showArrow": false,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": true,
+  "centerStrength": 0.518713248970312,
+  "repelStrength": 10,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 0.13168724279835195,
+  "close": false
+}

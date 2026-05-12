@@ -14,13 +14,14 @@ def project(tmp_path: Path) -> Path:
     """A minimal project with a tiny vault, ready for the server to load."""
     proj = tmp_path / "agent"
     (proj).mkdir()
-    (proj / "cma.config.yaml").write_text(
-        "vault_path: ./vault\nindex_path: ./.cma\nembedding_provider: none\n",
+    (proj / "cma").mkdir(parents=True, exist_ok=True)
+    (proj / "cma" / "config.yaml").write_text(
+        "vault_path: ./cma/vault\nindex_path: ./cma/cache\nembedding_provider: none\n",
         encoding="utf-8",
     )
-    (proj / "vault" / "003-decisions").mkdir(parents=True)
-    (proj / "vault" / "004-patterns").mkdir(parents=True)
-    (proj / "vault" / "003-decisions" / "Async Capital Call Processing.md").write_text(
+    (proj / "cma" / "vault" / "003-decisions").mkdir(parents=True)
+    (proj / "cma" / "vault" / "004-patterns").mkdir(parents=True)
+    (proj / "cma" / "vault" / "003-decisions" / "Async Capital Call Processing.md").write_text(
         """---
 type: decision
 title: Async Capital Call Processing
@@ -35,7 +36,7 @@ Uses [[Queue Retry Pattern]].
 """,
         encoding="utf-8",
     )
-    (proj / "vault" / "004-patterns" / "Queue Retry Pattern.md").write_text(
+    (proj / "cma" / "vault" / "004-patterns" / "Queue Retry Pattern.md").write_text(
         """---
 type: pattern
 title: Queue Retry Pattern
@@ -50,8 +51,9 @@ Used by [[Async Capital Call Processing]].
 """,
         encoding="utf-8",
     )
-    (proj / "recorder").mkdir()
-    (proj / "recorder" / "memory_write_proposals").mkdir()
+    (proj / "cma" / "memory_log").mkdir(parents=True, exist_ok=True)
+    (proj / "cma" / "memory_log" / "proposals").mkdir(exist_ok=True)
+    (proj / "cma" / "memory_log" / "write_logs").mkdir(exist_ok=True)
     return proj
 
 
@@ -157,7 +159,7 @@ decisions:
     result = mcp_server.record_completion(yaml_str, dry_run=True)
     assert "written" in result
     # Dry run: no files actually created
-    assert not (project / "vault" / "003-decisions" / "Test Decision.md").exists()
+    assert not (project / "cma" / "vault" / "003-decisions" / "Test Decision.md").exists()
 
 
 def test_graph_health(project: Path):
@@ -173,7 +175,7 @@ def test_reindex_picks_up_new_note(project: Path):
     pre = mcp_server.graph_health()
     assert pre["total_nodes"] == 2
     # Add a new note
-    (project / "vault" / "004-patterns" / "New Pattern.md").write_text(
+    (project / "cma" / "vault" / "004-patterns" / "New Pattern.md").write_text(
         "---\ntype: pattern\ntitle: New Pattern\n---\n\nA fresh idea.\n",
         encoding="utf-8",
     )

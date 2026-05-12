@@ -24,15 +24,23 @@ from cma.retriever.embeddings import (
     EmbeddingIndex,
     get_embedder,
 )
+import time
+from datetime import datetime, timezone
+
 from cma.retriever.fragments import deduplicate_fragments, select_fragments
 from cma.retriever.lexical import BM25Index
 from cma.retriever.scoring import final_score, hybrid_node_score, metadata_boost
-from cma.retriever.spec_builder import build_context_spec
+from cma.retriever.spec_builder import (
+    build_context_spec,
+    new_spec_id,
+    write_spec_stub,
+    write_spec_to_vault,
+)
 from cma.retriever.traversal import traverse
 from cma.schemas.context_spec import ContextSpec, Fragment, RelationshipEdge
 from cma.schemas.memory_record import MemoryRecord
 from cma.storage.graph_store import build_graph
-from cma.storage.markdown_store import parse_vault
+from cma.storage.markdown_store import parse_vault, update_frontmatter
 
 
 class Retriever:
@@ -45,6 +53,7 @@ class Retriever:
         config: RetrievalConfig | None = None,
         embedder: Embedder | None = None,
         project_path: Path | None = None,
+        vault_path: Path | None = None,
     ) -> None:
         self.records = records
         self.records_by_id: dict[str, MemoryRecord] = {r.record_id: r for r in records}
@@ -52,6 +61,7 @@ class Retriever:
         self.config = config or RetrievalConfig()
         self.embedder = embedder
         self.project_path = Path(project_path).resolve() if project_path else None
+        self.vault_path = Path(vault_path).resolve() if vault_path else None
         self.bm25 = BM25Index(records)
         self.embedding_index: EmbeddingIndex | None = (
             EmbeddingIndex.build(records, embedder) if embedder else None
@@ -90,6 +100,7 @@ class Retriever:
             config=config.retrieval,
             embedder=resolved,
             project_path=Path(project_path).resolve(),
+            vault_path=Path(config.vault_path).resolve(),
         )
 
     # ----- internals -----
@@ -237,6 +248,8 @@ class Retriever:
         depth_decay: float | None = None,
         max_fragments_per_node: int | None = None,
         seed_top_k: int = 10,
+        demo: bool = False,
+        demo_step_seconds: float = 0.8,
     ) -> ContextSpec:
         cfg = self.config
         max_depth = max_depth if max_depth is not None else cfg.max_depth
@@ -257,6 +270,17 @@ class Retriever:
             query, top_k=seed_top_k, alpha=alpha, node_threshold=node_threshold
         )
         candidates = traverse(self.graph, seeds, max_depth=max_depth, beam_width=beam_width)
+
+        spec_id = new_spec_id()
+        if demo and self.vault_path:
+            self._demo_walk(
+                spec_id=spec_id,
+                task_id=task_id or "ad-hoc",
+                query=query,
+                candidates=candidates,
+                step_seconds=demo_step_seconds,
+            )
+
         scored = self._score_candidates(query, candidates, alpha=alpha, depth_decay=depth_decay)
         fragments = self._extract_node_fragments(
             scored,
@@ -283,6 +307,7 @@ class Retriever:
             fragments=fragments,
             relationship_map=relationship_map,
             retriever_version=__version__,
+            spec_id=spec_id,
         )
         if self.project_path is not None:
             try:
@@ -301,7 +326,169 @@ class Retriever:
             except Exception:
                 # Logging is best-effort; never break a retrieve because the log dir is bad.
                 pass
+
+        if self.vault_path is not None:
+            if not demo:
+                # In demo mode, _demo_walk already touched each node as the
+                # cursor visited it. Don't double-bump retrieve_count here.
+                self._touch_visited_notes(spec)
+            self._persist_spec_note(spec)
         return spec
+
+    # ----- side effects: live graph visualization -----
+
+    def _demo_walk(
+        self,
+        *,
+        spec_id: str,
+        task_id: str,
+        query: str,
+        candidates: list,
+        step_seconds: float,
+    ) -> None:
+        """Walk a visible cursor through `candidates` one node at a time.
+
+        For each candidate:
+            1. Demote previous (clear cma_active, set last_retrieved_at, +1 count)
+            2. Set cma_active=true on the current node
+            3. Append this source to the in-progress spec stub
+            4. Sleep step_seconds so Obsidian re-renders between hops
+
+        Final demotion happens at the end so no node is left with cma_active=true.
+        Best-effort throughout: a single failed write must not abort the walk.
+        """
+        if not self.vault_path:
+            return
+        try:
+            write_spec_stub(
+                self.vault_path,
+                spec_id=spec_id,
+                task_id=task_id,
+                query=query,
+                sources_so_far=[],
+                retriever_version=__version__,
+            )
+        except Exception:
+            return
+
+        sources_so_far: list[str] = []
+        seen_ids: set[str] = set()
+        prev_id: str | None = None
+
+        for cand in candidates:
+            rec = self.records_by_id.get(cand.node_id)
+            if rec is None or rec.record_id in seen_ids:
+                continue
+            seen_ids.add(rec.record_id)
+            file_path = self.vault_path / rec.path
+            if not file_path.exists():
+                continue
+
+            if prev_id is not None:
+                self._demote_active_node(prev_id)
+
+            try:
+                update_frontmatter(file_path, {"cma_active": True})
+            except Exception:
+                prev_id = None
+                continue
+
+            sources_so_far.append(rec.title)
+            try:
+                write_spec_stub(
+                    self.vault_path,
+                    spec_id=spec_id,
+                    task_id=task_id,
+                    query=query,
+                    sources_so_far=sources_so_far,
+                    retriever_version=__version__,
+                )
+            except Exception:
+                pass
+
+            time.sleep(step_seconds)
+            prev_id = rec.record_id
+
+        if prev_id is not None:
+            self._demote_active_node(prev_id)
+
+    def _demote_active_node(self, record_id: str) -> None:
+        """Clear cma_active on a node and stamp last_retrieved_at + retrieve_count."""
+        if not self.vault_path:
+            return
+        rec = self.records_by_id.get(record_id)
+        if rec is None:
+            return
+        file_path = self.vault_path / rec.path
+        if not file_path.exists():
+            return
+        prev_count = rec.frontmatter.get("retrieve_count", 0)
+        try:
+            prev_count = int(prev_count)
+        except (TypeError, ValueError):
+            prev_count = 0
+        try:
+            update_frontmatter(
+                file_path,
+                {
+                    "cma_active": False,
+                    "last_retrieved_at": datetime.now(timezone.utc).isoformat(),
+                    "retrieve_count": prev_count + 1,
+                },
+            )
+        except Exception:
+            return
+
+    def _touch_visited_notes(self, spec: ContextSpec) -> None:
+        """Stamp last_retrieved_at + retrieve_count on each note that contributed.
+
+        Best-effort: a write failure on one note must not break the retrieve.
+        Drives the heatmap colorGroups in the Obsidian graph view.
+        """
+        if not self.vault_path:
+            return
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # Use titles from fragments to look up records, then resolve to file paths.
+        seen_ids: set[str] = set()
+        for frag in spec.fragments:
+            rec = next(
+                (r for r in self.records if r.title == frag.source_node),
+                None,
+            )
+            if rec is None or rec.record_id in seen_ids:
+                continue
+            seen_ids.add(rec.record_id)
+            file_path = self.vault_path / rec.path
+            if not file_path.exists():
+                continue
+            prev_count = rec.frontmatter.get("retrieve_count", 0)
+            try:
+                prev_count = int(prev_count)
+            except (TypeError, ValueError):
+                prev_count = 0
+            try:
+                update_frontmatter(
+                    file_path,
+                    {
+                        "last_retrieved_at": now_iso,
+                        "retrieve_count": prev_count + 1,
+                    },
+                )
+            except Exception:
+                continue
+
+    def _persist_spec_note(self, spec: ContextSpec) -> None:
+        """Write the spec to vault/008-context-specs/ as a linked markdown note.
+
+        Best-effort. The wikilinks fan out from the spec node to every source
+        when the vault is opened in Obsidian.
+        """
+        if not self.vault_path:
+            return
+        try:
+            write_spec_to_vault(spec, self.vault_path)
+        except Exception:
+            pass
 
 
 def _why_included(record: MemoryRecord, depth: int, score: float) -> str:

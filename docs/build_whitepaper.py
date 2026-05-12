@@ -31,8 +31,8 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-OUT = Path(__file__).parent / "CMA_Whitepaper_v0.4.pdf"
-VERSION = "0.4"
+OUT = Path(__file__).parent / "CMA_Whitepaper_v0.5.pdf"
+VERSION = "0.5"
 TITLE = "Contextual Memory Architecture"
 SUBTITLE = (
     "A Lightweight, Local-First Memory Layer for Persistent AI Agents"
@@ -593,6 +593,30 @@ def build_story() -> list:
         "and others are dropped. This keeps the Context Spec compact when graph "
         "traversal surfaces structurally redundant text."
     ))
+    s.append(para(
+        "Plainly: a <i>fragment</i> is a single paragraph (or short section) of "
+        "text that the Retriever decided was relevant to the query. The "
+        "Retriever does not paste whole notes into the Context Spec - it "
+        "cherry-picks paragraphs. A 466-token decision note with five sections "
+        "might contribute three fragments totaling 217 tokens, leaving the other "
+        "249 tokens of the note out of the spec. The dashboard surfaces this "
+        "per-source breakdown (&sect;5.9) so the user can see which fragments "
+        "were pulled and what fraction of each source note made it into the "
+        "agent's context."
+    ))
+    s.append(para(
+        "Before scoring, paragraphs that match structural-boilerplate patterns are "
+        "dropped from the candidate pool: markdown headings "
+        "(<font name='Courier'>^#+\\s</font>), ingest attribution lines "
+        "(<font name='Courier'>^From \\[\\[X\\]\\] / path</font>), and lone code "
+        "fences. These short paragraphs match query keywords on superficial overlap "
+        "(<font name='Courier'>'# notify'</font> matches a query about "
+        "<font name='Courier'>notify.py</font>) but carry no real content. Filtering "
+        "them at the source means the fragment selection rewards substantive "
+        "paragraphs over markdown structure. If every paragraph in a note is "
+        "boilerplate the filter degrades gracefully and includes the original "
+        "set, preserving the no-empty-result contract."
+    ))
 
     s.append(Paragraph("4.5&nbsp;&nbsp;Context Spec assembly", H2))
     s.append(para(
@@ -699,35 +723,263 @@ def build_story() -> list:
         "This conservative default prevents accidental loss of human edits."
     ))
 
+    s.append(Paragraph("5.6&nbsp;&nbsp;Automatic related-note linking", H2))
+    s.append(para(
+        "Structural backlinks (session &harr; decision/pattern, daily log &rarr; session) "
+        "give the graph a star pattern around each task, but they do not connect "
+        "thematically related notes across tasks. Without further work, a vault "
+        "tends to grow as disconnected stars. To counter this, the Recorder runs a "
+        "lightweight similarity lookup at write time: it builds an in-memory BM25 "
+        "index over all existing decisions and patterns, scores the new note's "
+        "title-and-rationale text against the corpus, and appends the top-<i>k</i> "
+        "titles above a similarity threshold as a <font name='Courier'>## Related</font> "
+        "section of <font name='Courier'>[[wikilinks]]</font> in the rendered note "
+        "(default k = 3, threshold = 0.4 normalized BM25 score)."
+    ))
+    s.append(para(
+        "The lookup is best-effort: if the vault is empty, unparseable, or the "
+        "BM25 module is unavailable, the Recorder writes the note without a Related "
+        "section rather than failing. No new dependencies are introduced - the same "
+        "BM25 implementation used by the Retriever (Section 4.1) is reused. The "
+        "computational cost is negligible at typical vault scales (a few milliseconds "
+        "per record_completion call for vaults under ten thousand decision/pattern "
+        "notes)."
+    ))
+    s.extend(algo("Algorithm 3. Auto-related linking during a Recorder write.",
+        "function find_related(new_text, vault, k=3, threshold=0.4):\n"
+        "    existing = [r for r in vault.records\n"
+        "                if r.type in {'decision', 'pattern'}]\n"
+        "    if existing is empty: return []\n"
+        "    index = BM25Index(existing)\n"
+        "    hits = index.search(new_text, top_k=2k)\n"
+        "    related = []\n"
+        "    for (record_id, score) in hits:\n"
+        "        if score < threshold: continue\n"
+        "        title = vault.title_of(record_id)\n"
+        "        if title == new_text.title: continue   # no self-links\n"
+        "        related.append(title)\n"
+        "        if len(related) >= k: break\n"
+        "    return related"))
+    s.append(para(
+        "The effect on graph density is concrete: in a vault with a hundred "
+        "decisions covering five distinct domains, a new decision in one of the "
+        "domains will typically attract three to five related links into that "
+        "cluster, whereas before it would have been an isolated leaf with only its "
+        "session backlink. This keeps retrieval recall high as the vault grows: the "
+        "graph traversal in Section 4.2 has more edges to follow, so a query that "
+        "lands on any node in the cluster can reach the rest within the configured "
+        "depth."
+    ))
+
+    s.append(Paragraph("5.7&nbsp;&nbsp;Automatic firing via host hooks", H2))
+    s.append(para(
+        "The three nodes of &sect;3.1 (Reasoner, Retriever, Recorder) must fire on "
+        "every task to make memory part of the agent's default loop rather than an "
+        "optional tool the agent might or might not remember to call. We achieve "
+        "this without coupling the engine to any one host runtime by exposing two "
+        "thin hook entry points - <font name='Courier'>cma hook user-prompt</font> "
+        "and <font name='Courier'>cma hook stop</font> - and letting the host's hook "
+        "system trigger them at task boundaries. For Claude Code (the reference host), "
+        "<font name='Courier'>cma add</font> registers these in "
+        "<font name='Courier'>.claude/settings.json</font> under "
+        "<font name='Courier'>UserPromptSubmit</font> and <font name='Courier'>Stop</font>."
+    ))
+    s.append(para(
+        "The UserPromptSubmit hook runs the FULL Retriever pipeline of &sect;4 end-to-end: "
+        "hybrid BM25+embedding seed selection (&sect;4.1), beam-pruned graph traversal "
+        "(&sect;4.2), paragraph-level fragment extraction (&sect;4.4), Context Spec "
+        "assembly (&sect;4.5), and persistence to "
+        "<font name='Courier'>vault/008-context-specs/</font>. Per-hook cost is "
+        "approximately 2 to 3 seconds dominated by loading the sentence-transformers "
+        "model into the new Python process; this falls inside the agent's normal "
+        "first-token latency and is not user-visible in practice. The hook also "
+        "captures the prompt to "
+        "<font name='Courier'>vault/000-inbox/prompts/&lt;date&gt;/</font> with "
+        "<font name='Courier'>status: noise</font> for the inbox-promotion mechanism "
+        "of &sect;5.8, and the persisted spec note immediately joins the vault as a "
+        "first-class memory artifact - future retrieves can find prior specs as "
+        "relevant sources, compounding the agent's own context-gathering work."
+    ))
+    s.append(para(
+        "Two filters narrow the hook's seed pool to keep auto-fire signal high. "
+        "First, inbox prompt notes (<font name='Courier'>status: noise</font>) are "
+        "excluded: matching against them would be circular, since the just-captured "
+        "prompt would otherwise rank itself first. Second, prior "
+        "<font name='Courier'>context_spec</font> notes are excluded: their bodies "
+        "contain query-keyword-heavy structural metadata "
+        "(<font name='Courier'>## Sources</font>, "
+        "<font name='Courier'>From [[X]] / path</font>) that crowds out primary source "
+        "content under hybrid scoring. Agents that explicitly want the spec-feeds-spec "
+        "flywheel call <font name='Courier'>mcp__cma__retrieve</font> directly, which "
+        "operates on the unfiltered pool."
+    ))
+    s.append(para(
+        "The Stop hook appends a session summary to "
+        "<font name='Courier'>vault/002-sessions/&lt;session-id&gt;.md</font>. This is "
+        "mechanical capture only: no LLM call, no decision extraction. Promoting a "
+        "session into structured memory (decisions, patterns, postmortems) remains "
+        "the Recorder sub-agent's job, invoked deliberately when the agent has work "
+        "worth committing per the confidence-gated policy of &sect;5.1-5.6."
+    ))
+    s.append(para(
+        "The hook contract is intentionally portable: a host integrator on any other "
+        "framework wires their equivalent of pre-step and post-step hooks to invoke "
+        "the same two CLI commands. The CMA engine itself remains host-agnostic; "
+        "only the registration step in <font name='Courier'>cma add</font> is "
+        "Claude Code-specific."
+    ))
+
+    s.append(Paragraph("5.8&nbsp;&nbsp;The prompt inbox and noise promotion", H2))
+    s.append(para(
+        "Capturing every prompt - including ones that turn out to be irrelevant - "
+        "is a small cost (one markdown file with frontmatter, a few hundred bytes) "
+        "with a large optionality payoff. Inbox prompts form their own cluster in "
+        "the graph view (color-grouped distinctly from active notes) and are "
+        "searchable with the same primitives that operate on the rest of the vault. "
+        "The Curator sub-agent periodically scans the inbox for recurring themes: "
+        "when the same question has appeared in 3+ distinct sessions, it proposes "
+        "promotion - either to a <i>pattern</i> note (if the recurrence reflects a "
+        "behavior the user keeps doing) or to a <i>concept</i> note (if it reflects "
+        "a new vault entity worth naming). The host agent approves the promotion; "
+        "the originals get <font name='Courier'>status: promoted</font> and link to "
+        "the new note as <font name='Courier'>evidence</font>. Nothing is thrown "
+        "away; nothing pretends to be more than it is."
+    ))
+
+    s.append(Paragraph("5.9&nbsp;&nbsp;Memory log and verification dashboard", H2))
+    s.append(para(
+        "Every meaningful CMA operation - search, retrieve, record, index, ingest, "
+        "bootstrap - appends one event to "
+        "<font name='Courier'>cma/memory_log/activity.jsonl</font> and triggers the "
+        "regeneration of <font name='Courier'>cma/memory_log/dashboard.html</font>. "
+        "The dashboard is a single self-contained HTML file: vanilla CSS and "
+        "JavaScript, no server, no CDN, no build step. The user opens it once in any "
+        "browser and leaves it open; an embedded "
+        "<font name='Courier'>&lt;meta http-equiv=&quot;refresh&quot;&gt;</font> tag "
+        "reloads the page every five seconds, and JavaScript restores scroll "
+        "position so the reload is visually invisible."
+    ))
+    s.append(para(
+        "Each event renders as a row showing time, type, summary, and "
+        "<font name='Courier'>[[wikilink]]</font>-style links to every artifact "
+        "produced. A retrieve or auto-fire prompt event links to the Context Spec "
+        "note it wrote; a record event links to the decision, pattern, session, "
+        "and daily-log notes it produced. Links open in Obsidian via the "
+        "<font name='Courier'>obsidian://</font> protocol when the user has Obsidian "
+        "installed, falling back to <font name='Courier'>file://</font> otherwise. "
+        "The dashboard groups events by session (one Claude Code restart = one "
+        "session) and supports filtering by event type, session, and free-text "
+        "query."
+    ))
+    s.append(para(
+        "Per-source token accounting. For every retrieve event, the dashboard "
+        "renders one row per source node the Retriever pulled fragments from, "
+        "with three pieces of provenance metadata: tokens extracted (sum of "
+        "<font name='Courier'>len(text)/4</font> across that source's fragments), "
+        "tokens total (the source note's full token count, same approximation), "
+        "and percent of the document used. A user can tell at a glance whether "
+        "the Retriever pulled a tight slice of a long note (e.g., "
+        "<font name='Courier'>notification_channels &middot; 82/507 tokens (16.3%)</font>) "
+        "or essentially the whole short note (<font name='Courier'>classify "
+        "&middot; 162/249 tokens (65.3%)</font>). Each source row also exposes a "
+        "&quot;view fragments&quot; link that opens the persisted spec.md - the "
+        "user can jump from a one-line summary to the exact paragraphs the "
+        "Retriever extracted, organized under "
+        "<font name='Courier'>### From [[source_title]]</font> headings inside the spec."
+    ))
+    s.append(para(
+        "The design choice of static-HTML over a live web server is deliberate: "
+        "CMA installs into many agent projects, and a per-project background "
+        "server creates &quot;which port, did I forget to start it&quot; friction. "
+        "Static regeneration is cheap (~10 ms per event for a few hundred events) "
+        "and the meta-refresh keeps the page current without a long-running process. "
+        "The same JSONL log is also exposed via the <font name='Courier'>cma "
+        "activity</font> CLI command for terminal users; both surfaces read the "
+        "same source of truth."
+    ))
+    s.append(para(
+        "The activity log is the primary mechanism for real-life verification of a "
+        "CMA install. A user opens the dashboard, runs a few prompts in their host "
+        "agent (&quot;search the vault for X&quot;, &quot;retrieve context for Y&quot;, "
+        "&quot;record this decision&quot;), and watches the events stream in with "
+        "clickable links to every artifact produced. The Obsidian graph view "
+        "(&sect;7.3) provides the structural view; the activity dashboard provides "
+        "the temporal view; together they make the otherwise-invisible work of the "
+        "memory layer legible."
+    ))
+
     # ---------- 6. local-first substrate ----------
     s.append(Paragraph("6.&nbsp;&nbsp;Local-First Substrate", H1))
     s.append(Paragraph("6.1&nbsp;&nbsp;Vault layout", H2))
     s.append(para(
-        "Each CMA project is a directory containing a single configuration file, a "
-        "vault subdirectory (the canonical memory store), per-node working "
-        "directories for Reasoner, Retriever, and Recorder artifacts, and a "
-        "<font name='Courier'>.cma/</font> directory for derived state. The vault is "
-        "organized into thirteen numbered subfolders (<font name='Courier'>000-inbox</font>"
-        " through <font name='Courier'>011-archive</font>) corresponding to canonical "
-        "note types: inbox, projects, sessions, decisions, patterns, people, tools, "
-        "codebase, context-specs, evals, daily-log, archive. The numeric prefixes "
-        "preserve sort order in any file browser and in Obsidian."
+        "All CMA-managed files live under a single <font name='Courier'>cma/</font> "
+        "subdirectory of the host agent's project, keeping the project root uncluttered. "
+        "Inside <font name='Courier'>cma/</font>: a single configuration file "
+        "(<font name='Courier'>config.yaml</font>), a <font name='Courier'>vault/</font> "
+        "subdirectory holding the canonical markdown memory store, a "
+        "<font name='Courier'>cache/</font> directory for derived state (BM25, "
+        "embeddings, graph manifest), and a <font name='Courier'>memory_log/</font> "
+        "directory for the operational activity stream and its visual dashboard. "
+        "The vault is organized into thirteen numbered subfolders "
+        "(<font name='Courier'>000-inbox</font> through <font name='Courier'>011-archive</font>) "
+        "corresponding to canonical note types: inbox, projects, sessions, decisions, "
+        "patterns, people, tools, codebase, context-specs, evals, daily-log, archive. "
+        "The numeric prefixes preserve sort order in any file browser and in Obsidian."
     ))
+    s.extend(figure_box([
+        "  agent-project/",
+        "    cma/",
+        "      config.yaml",
+        "      vault/                    # canonical markdown memory + .obsidian/",
+        "        000-inbox/ ... 020-sources/",
+        "      cache/                    # BM25, embeddings, graph state (derived)",
+        "      memory_log/               # operational activity stream + dashboard",
+        "        activity.jsonl",
+        "        dashboard.html",
+        "        write_logs/  proposals/",
+        "    .claude/agents/cma-*.md     # Claude Code requires .claude/ at root",
+        "    CLAUDE.md                   # Claude Code requires CLAUDE.md at root",
+        "    .mcp.json                   # Claude Code requires .mcp.json at root",
+    ], "Figure 4. Project layout after cma add. Three top-level subdirectories under "
+       "cma/: vault (canonical), cache (derived), memory_log (operational). The three "
+       "Claude Code files at the project root are required by the host runtime."))
 
-    s.append(Paragraph("6.2&nbsp;&nbsp;Derived state", H2))
+    s.append(Paragraph("6.2&nbsp;&nbsp;Derived state and operational logs", H2))
     s.append(para(
-        "<font name='Courier'>.cma/</font> contains the BM25 pickle, the embedding "
+        "<font name='Courier'>cma/cache/</font> contains the BM25 pickle, the embedding "
         "matrix as a NumPy <font name='Courier'>.npy</font> file with associated "
         "<font name='Courier'>doc_ids.json</font> and <font name='Courier'>meta.json</font>, "
-        "the graph node manifest as JSON, the retrieval log as JSONL, and various "
-        "caches and evaluation artifacts. Every artifact is regenerable from the "
-        "vault by running <font name='Courier'>cma index</font>. This invariant - "
-        "<i>vault is canonical, .cma/ is derived</i> - is enforced architecturally: "
-        "the Recorder writes only to the vault, never to "
-        "<font name='Courier'>.cma/</font>."
+        "the graph node manifest as JSON, and the retrieval log as JSONL. Every "
+        "artifact is regenerable from the vault by running <font name='Courier'>cma "
+        "index</font>. This invariant - <i>vault is canonical, cache/ is derived</i> - "
+        "is enforced architecturally: the Recorder writes only to the vault, never to "
+        "<font name='Courier'>cache/</font>."
+    ))
+    s.append(para(
+        "<font name='Courier'>cma/memory_log/</font> holds the user-facing activity "
+        "stream: <font name='Courier'>activity.jsonl</font> is an append-only log of "
+        "every search, retrieve, record, ingest, and index operation; "
+        "<font name='Courier'>dashboard.html</font> is a self-contained visual viewer "
+        "regenerated after every event (&sect;5.7); <font name='Courier'>write_logs/</font> "
+        "and <font name='Courier'>proposals/</font> are the Recorder's per-task audit "
+        "trails and policy-gated write proposals respectively."
     ))
 
-    s.append(Paragraph("6.3&nbsp;&nbsp;Portability", H2))
+    s.append(Paragraph("6.3&nbsp;&nbsp;Robust parsing", H2))
+    s.append(para(
+        "Vault loading (<font name='Courier'>parse_vault</font>) is best-effort: any "
+        "individual note with malformed YAML frontmatter is degraded to an "
+        "empty-frontmatter record (the body still participates in BM25, embeddings, "
+        "and graph construction) rather than failing the whole vault load. One bad "
+        "file - typically an agent-written frontmatter with an unescaped Windows "
+        "path or a multi-line value the YAML scanner rejects - cannot take the memory "
+        "layer offline. The recorder writes new frontmatter through "
+        "<font name='Courier'>python-frontmatter</font> which always produces "
+        "well-formed YAML, so this failure mode is bounded to hand- or agent-edited "
+        "notes."
+    ))
+
+    s.append(Paragraph("6.4&nbsp;&nbsp;Portability", H2))
     s.append(para(
         "Because the vault is plain markdown with YAML frontmatter and wikilinks, it "
         "is portable across machines (a directory copy), version-controllable with "
@@ -777,6 +1029,62 @@ def build_story() -> list:
     ], "Figure 2. Fractal composition of per-agent vaults into a network-level "
        "memory graph. Each per-agent vault becomes a single node; edges between "
        "vaults represent typed sharing relationships."))
+
+    s.append(Paragraph("7.3&nbsp;&nbsp;Integration model", H2))
+    s.append(para(
+        "CMA ships as a drop-in bundle installed by a single command, <i>cma add</i>. "
+        "Run from any directory, it produces the layout shown in Figure 4 (&sect;6.1): "
+        "a single <font name='Courier'>cma/</font> subdirectory holding the vault, "
+        "config, node working dirs, and cache, plus three Claude Code-required files "
+        "at the project root (<font name='Courier'>CLAUDE.md</font> with a prompt block, "
+        "<font name='Courier'>.claude/agents/</font> with four pre-built sub-agents - "
+        "bootstrap for one-time vault training, research for deep retrieval, recorder "
+        "for write-back, curator for hygiene - and <font name='Courier'>.mcp.json</font> "
+        "registering the CMA MCP server). The default scope is project-local, "
+        "preserving the per-agent isolation of &sect;7.1. A --user flag installs at "
+        "user scope, appropriate when a single shared vault should be available across "
+        "all sessions of one user."
+    ))
+    s.append(para(
+        "The host agent is the Reasoner from &sect;3.1: it reads the prompt block, "
+        "decides when memory matters, and dispatches to sub-agents or MCP tools. "
+        "The bundle teaches the host how to use CMA; the host decides when. This "
+        "intentionally avoids tool-call hooks and session interceptors, which would "
+        "bypass the agent's autonomy and couple the integration to a specific runtime."
+    ))
+    s.extend(figure_box([
+        "  pip install contextual-memory-architecture[mcp]",
+        "  cd <agent-project>",
+        "  cma add",
+        "    -> scaffolds ./cma/ (vault, config, node folders, cache)",
+        "    -> writes CLAUDE.md, .claude/agents/, .mcp.json",
+        "    -> copies .obsidian/ graph config into the new vault",
+        "    -> ingests the agent's own source files into cma/vault/020-sources/",
+        "    -> builds BM25 + embeddings + graph (cma/cache/)",
+        "  # open Claude Code in <agent-project> for memory-aware sessions",
+        "  # open Obsidian on <agent-project>/cma/vault for the live graph view",
+    ], "Figure 3. The full integration ceremony, executed by a single command. "
+       "cma add is idempotent; re-running updates the prompt block, copies any "
+       "new bundle agents, and re-indexes."))
+    s.append(para(
+        "The MCP server defers initialization until first tool call so the stdio "
+        "handshake completes within the host's connect timeout (the embedding model "
+        "cold-start can exceed 30 seconds). The server holds Retriever and Recorder "
+        "state for the lifetime of the process; subsequent tool calls in a session "
+        "see a warm index."
+    ))
+    s.append(para(
+        "Auto-ingestion of the host project at <i>cma add</i> time means the graph "
+        "view in Obsidian shows real structure - decisions, design docs, code, and "
+        "their wikilink edges - on first open, not an empty scaffold. The bundled "
+        "<font name='Courier'>.obsidian/graph.json</font> ships color groups for the "
+        "retrieve-count heatmap (faded &rarr; mid &rarr; bright green), red "
+        "<font name='Courier'>context_spec</font> nodes, the yellow "
+        "<font name='Courier'>cma_active</font> demo cursor, and folder-based colors "
+        "for the canonical 020-prefixed vault layout. The user opens Obsidian, "
+        "selects 'Open folder as vault' on <font name='Courier'>cma/vault</font>, and "
+        "the visualization is immediately wired up; no per-vault configuration."
+    ))
 
     # ---------- 8. evaluation ----------
     s.append(Paragraph("8.&nbsp;&nbsp;Evaluation", H1))
@@ -1060,7 +1368,8 @@ def build_story() -> list:
     s.extend(make_table(
         ["Command", "Description"],
         [
-            ["cma init <path>",                              "Scaffold a new project."],
+            ["cma add [path] [--user]",                      "One-shot: scaffold + wire prompt, sub-agents, MCP (&sect;7.3)."],
+            ["cma init <path>",                              "Scaffold a new project (vault + config only). Used internally by cma add."],
             ["cma setup [path]",                             "Interactive: integration + embedding provider."],
             ["cma index [path] [--no-embeddings]",           "Training phase: parse, build graph, BM25, embeddings."],
             ["cma graph health [path]",                      "Graph structure report."],
@@ -1100,7 +1409,7 @@ def build_story() -> list:
     s.append(HRFlowable(width="30%", thickness=0.4, color=INK,
                         spaceBefore=8, spaceAfter=8, hAlign="CENTER"))
     s.append(Paragraph(
-        "End of paper. Contextual Memory Architecture, v0.4. "
+        "End of paper. Contextual Memory Architecture, v0.5. "
         "github.com/danny-watkins/contextual-memory-architecture",
         ParagraphStyle("End", parent=BODY, alignment=TA_CENTER,
                        fontName="Times-Italic", textColor=DIM,

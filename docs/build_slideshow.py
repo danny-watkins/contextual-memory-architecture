@@ -18,7 +18,7 @@ from reportlab.lib.units import inch
 from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.pdfgen import canvas as rl_canvas
 
-OUT = Path(__file__).parent / "CMA_Slideshow_v0.4.pdf"
+OUT = Path(__file__).parent / "CMA_Slideshow_v0.5.pdf"
 # 16:9 at decimal-friendly dimensions
 PAGE = (13.333 * inch, 7.5 * inch)
 
@@ -87,7 +87,7 @@ def page_chrome(c, slide_num: int, total: int, label: str = "") -> None:
     c.setFillColor(DIM)
     c.setFont("Helvetica", 9)
     c.drawString(MARGIN_X, 0.4 * inch,
-                 "Contextual Memory Architecture - v0.4")
+                 "Contextual Memory Architecture - v0.5 alpha")
     c.drawRightString(PAGE[0] - MARGIN_X, 0.4 * inch,
                       f"{slide_num:02d} / {total:02d}")
 
@@ -106,7 +106,7 @@ def slide_title(c, n, total) -> None:
               MARGIN_X, title_y - 130, font="Helvetica", size=22, color=DIM)
     # Tiny meta block
     meta_y = 1.2 * inch
-    draw_text(c, "v0.4   /   Open source (MIT)   /   github.com/danny-watkins/contextual-memory-architecture",
+    draw_text(c, "v0.5 alpha   /   Open source (MIT)   /   github.com/danny-watkins/contextual-memory-architecture",
               MARGIN_X, meta_y, font="Helvetica", size=11, color=DIM)
     # No footer for cover
     c.setFillColor(DIM)
@@ -711,12 +711,12 @@ def slide_health(c, n, total) -> None:
 
 def slide_scaling(c, n, total) -> None:
     page_chrome(c, n, total)
-    draw_text(c, "Scaling characteristics.", MARGIN_X, 6.5 * inch,
+    draw_text(c, "Designed for single-CPU scale.", MARGIN_X, 6.5 * inch,
               font="Helvetica-Bold", size=44, color=INK)
-    draw_text(c, "Per-vault footprint and latency on commodity hardware (MiniLM-L6-v2 384d).",
+    draw_text(c, "Projected footprint and latency on commodity hardware (MiniLM-L6-v2 384d).",
               MARGIN_X, 6.5 * inch - 38, font="Helvetica", size=15, color=DIM)
     # Table
-    headers = ["Vault size", "Markdown", "Embeddings", "RAM",     "Query latency"]
+    headers = ["Vault size", "Markdown", "Embeddings", "RAM",     "Projected latency"]
     rows = [
         ["1K notes",     "~10 MB",    "~1.5 MB",    "~50 MB",  "<50 ms"],
         ["10K notes",    "~100 MB",   "~15 MB",     "~250 MB", "<100 ms"],
@@ -749,9 +749,10 @@ def slide_scaling(c, n, total) -> None:
     c.setStrokeColor(RULE)
     c.setLineWidth(0.5)
     c.line(MARGIN_X, 1.7 * inch, PAGE[0] - MARGIN_X, 1.7 * inch)
-    draw_text(c, "Beyond ~100K, swap to ANN structures (FAISS, hnswlib).  "
-                 "Beyond ~500K, shard by domain - the fractal pattern.",
-              MARGIN_X, 1.4 * inch, font="Helvetica-Oblique", size=14, color=DIM)
+    draw_text(c, "Projections from algorithmic complexity. Reference implementation validated on small demo vaults.",
+              MARGIN_X, 1.55 * inch, font="Helvetica-Oblique", size=12, color=DIM)
+    draw_text(c, "Beyond ~100K, swap to ANN structures (FAISS, hnswlib).  Beyond ~500K, shard by domain.",
+              MARGIN_X, 1.25 * inch, font="Helvetica-Oblique", size=12, color=DIM)
 
 
 def slide_what_its_not(c, n, total) -> None:
@@ -786,11 +787,12 @@ def slide_get_started(c, n, total) -> None:
     # Code block: clean, no decoration
     code_y = 5.2 * inch
     code_lines = [
-        "$ pip install contextual-memory-architecture[all]",
+        "$ git clone github.com/danny-watkins/contextual-memory-architecture",
+        "$ cd contextual-memory-architecture",
+        "$ pip install -e \".[all]\"",
         "",
-        "$ cma init my-agent",
-        "$ cma index my-agent",
-        "$ cma mcp serve --project my-agent",
+        "$ cd /path/to/your-agent-project",
+        "$ cma add        # one-shot: scaffold + ingest + wire hooks + MCP",
     ]
     cy = code_y
     for line in code_lines:

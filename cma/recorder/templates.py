@@ -78,6 +78,7 @@ def render_decision(
     decision: Decision,
     package: CompletionPackage,
     status_override: str | None = None,
+    related_titles: list[str] | None = None,
 ) -> str:
     fm = {
         "type": "decision",
@@ -91,6 +92,11 @@ def render_decision(
     lines = [_frontmatter(fm), "", f"# {decision.title}", ""]
     if decision.rationale:
         lines += ["## Rationale", decision.rationale, ""]
+    if related_titles:
+        lines.append("## Related")
+        for t in related_titles:
+            lines.append(f"- [[{t}]]")
+        lines.append("")
     lines.append(f"Recorded from [[{package.task_id}]].")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -99,6 +105,7 @@ def render_pattern(
     pattern: Pattern,
     package: CompletionPackage,
     status_override: str | None = None,
+    related_titles: list[str] | None = None,
 ) -> str:
     fm = {
         "type": "pattern",
@@ -113,6 +120,11 @@ def render_pattern(
         lines.append("## Evidence")
         for ev in pattern.evidence:
             lines.append(f"- {ev}")
+        lines.append("")
+    if related_titles:
+        lines.append("## Related")
+        for t in related_titles:
+            lines.append(f"- [[{t}]]")
         lines.append("")
     lines.append(f"First observed in [[{package.task_id}]].")
     return "\n".join(lines).rstrip() + "\n"

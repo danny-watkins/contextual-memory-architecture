@@ -56,6 +56,23 @@ def test_select_fragments_fallback_returns_first_paragraph():
     assert len(picks) >= 1
 
 
+def test_select_fragments_boilerplate_filtered():
+    """Markdown headings and attribution lines should be filtered before scoring;
+    real content paragraphs should be preferred even if shorter."""
+    body = (
+        "# notify\n\n"
+        "From [[email-checker]] / `skills/notify.py`.\n\n"
+        "route_notification dispatches to a channel based on the category lookup."
+    )
+    picks = select_fragments(body, "notify route channel", max_fragments=3)
+    titles = [p for p, _ in picks]
+    # Boilerplate paragraphs must be absent
+    assert not any(p.startswith("# notify") for p in titles)
+    assert not any(p.startswith("From [[") for p in titles)
+    # Real content paragraph must be present
+    assert any("route_notification" in p for p in titles)
+
+
 def test_select_fragments_empty_body():
     assert select_fragments("", "query") == []
 

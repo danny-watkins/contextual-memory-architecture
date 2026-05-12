@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 from cma.schemas.context_spec import ContextSpec, Exclusion, Fragment, RelationshipEdge
+
+_FILENAME_SAFE = re.compile(r"[^A-Za-z0-9_\-]+")
 
 
 def build_context_spec(
@@ -18,10 +22,11 @@ def build_context_spec(
     open_questions: list[str] | None = None,
     exclusions: list[Exclusion] | None = None,
     retriever_version: str = "0.1.0",
+    spec_id: str | None = None,
 ) -> ContextSpec:
     """Assemble a ContextSpec from already-scored fragments and a relationship map."""
     return ContextSpec(
-        spec_id=f"spec-{uuid4().hex[:8]}",
+        spec_id=spec_id or f"spec-{uuid4().hex[:8]}",
         task_id=task_id,
         query=query,
         generated_at=datetime.now(timezone.utc),
@@ -32,6 +37,54 @@ def build_context_spec(
         open_questions=open_questions or [],
         exclusions=exclusions or [],
     )
+
+
+def new_spec_id() -> str:
+    return f"spec-{uuid4().hex[:8]}"
+
+
+def write_spec_stub(
+    vault_path: Path,
+    *,
+    spec_id: str,
+    task_id: str,
+    query: str,
+    sources_so_far: list[str],
+    retriever_version: str = "0.1.0",
+) -> Path:
+    """Write a placeholder spec note that grows as the demo walk visits nodes.
+
+    Used only by demo mode. The final, full spec note is written by
+    `write_spec_to_vault` at the end of retrieve and overwrites this stub.
+    """
+    target_dir = Path(vault_path) / "008-context-specs"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = _FILENAME_SAFE.sub("-", spec_id) or "spec"
+    out_path = target_dir / f"{safe_id}.md"
+    safe_query = query.replace('"', "'")
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append("type: context_spec")
+    lines.append(f"spec_id: {spec_id}")
+    lines.append(f"task_id: {task_id}")
+    lines.append(f'query: "{safe_query}"')
+    lines.append(f"generated_at: {datetime.now(timezone.utc).isoformat()}")
+    lines.append(f"retriever_version: {retriever_version}")
+    lines.append("status: in_progress")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# Context Spec (in progress): {query}")
+    lines.append("")
+    lines.append("## Sources collected so far")
+    if not sources_so_far:
+        lines.append("_Walking the graph..._")
+    else:
+        for src in sources_so_far:
+            lines.append(f"- [[{src}]]")
+    lines.append("")
+    out_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return out_path
 
 
 def render_markdown(spec: ContextSpec) -> str:
@@ -96,3 +149,100 @@ def render_markdown(spec: ContextSpec) -> str:
         out.append("")
 
     return "\n".join(out).rstrip() + "\n"
+
+
+def render_spec_as_vault_note(spec: ContextSpec) -> str:
+    """Render a ContextSpec as a markdown note suitable for `vault/008-context-specs/`.
+
+    Adds YAML frontmatter (so the note parses as type=context_spec) and renders
+    every source as a `[[wikilink]]`. Opening the vault in Obsidian shows the
+    spec node with edges fanning out to every fragment source.
+    """
+    sources_in_order: list[str] = []
+    seen: set[str] = set()
+    for frag in spec.fragments:
+        if frag.source_node not in seen:
+            seen.add(frag.source_node)
+            sources_in_order.append(frag.source_node)
+
+    safe_query = spec.query.replace('"', "'")
+
+    lines: list[str] = []
+    lines.append("---")
+    lines.append("type: context_spec")
+    lines.append(f"spec_id: {spec.spec_id}")
+    lines.append(f"task_id: {spec.task_id}")
+    lines.append(f'query: "{safe_query}"')
+    lines.append(f"generated_at: {spec.generated_at.isoformat()}")
+    lines.append(f"retriever_version: {spec.retriever_version}")
+    lines.append(f"fragment_count: {len(spec.fragments)}")
+    lines.append(f"source_count: {len(sources_in_order)}")
+    lines.append("status: active")
+    lines.append("---")
+    lines.append("")
+    lines.append(f"# Context Spec: {spec.query}")
+    lines.append("")
+
+    lines.append("## Sources")
+    if not sources_in_order:
+        lines.append("_No sources retrieved._")
+    else:
+        for src in sources_in_order:
+            lines.append(f"- [[{src}]]")
+    lines.append("")
+
+    if spec.parameters:
+        lines.append("## Retrieval Parameters")
+        for key, value in spec.parameters.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+
+    lines.append("## Fragments")
+    if not spec.fragments:
+        lines.append("_No fragments retrieved._")
+        lines.append("")
+    for frag in spec.fragments:
+        lines.append(
+            f"### From [[{frag.source_node}]] "
+            f"(depth {frag.depth}, score {frag.node_score:.2f})"
+        )
+        lines.append("")
+        lines.append(frag.text)
+        lines.append("")
+        if frag.why_included:
+            lines.append(f"_{frag.why_included}_")
+            lines.append("")
+
+    if spec.relationship_map:
+        lines.append("## Relationship Map")
+        for edge in spec.relationship_map:
+            lines.append(f"- [[{edge.source}]] -> [[{edge.target}]] ({edge.edge_type})")
+        lines.append("")
+
+    if spec.open_questions:
+        lines.append("## Open Questions")
+        for q in spec.open_questions:
+            lines.append(f"- {q}")
+        lines.append("")
+
+    if spec.exclusions:
+        lines.append("## Exclusions")
+        for exc in spec.exclusions:
+            lines.append(f"- [[{exc.node}]]: {exc.reason}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_spec_to_vault(spec: ContextSpec, vault_path: Path) -> Path:
+    """Write the ContextSpec as a markdown note under `vault/008-context-specs/`.
+
+    Returns the path written. The folder is created if it doesn't exist.
+    """
+    vault_path = Path(vault_path)
+    target_dir = vault_path / "008-context-specs"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_id = _FILENAME_SAFE.sub("-", spec.spec_id) or "spec"
+    out_path = target_dir / f"{safe_id}.md"
+    out_path.write_text(render_spec_as_vault_note(spec), encoding="utf-8")
+    return out_path

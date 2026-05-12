@@ -11,13 +11,14 @@ from cma.lifecycle import archive_cold_notes, archive_note, supersede_decision
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "agent"
     project.mkdir()
-    (project / "cma.config.yaml").write_text(
-        "vault_path: ./vault\nindex_path: ./.cma\nembedding_provider: none\n",
+    (project / "cma").mkdir(parents=True, exist_ok=True)
+    (project / "cma" / "config.yaml").write_text(
+        "vault_path: ./cma/vault\nindex_path: ./cma/cache\nembedding_provider: none\n",
         encoding="utf-8",
     )
-    (project / "vault" / "003-decisions").mkdir(parents=True)
-    (project / "vault" / "004-patterns").mkdir(parents=True)
-    (project / "vault" / "011-archive").mkdir(parents=True)
+    (project / "cma" / "vault" / "003-decisions").mkdir(parents=True)
+    (project / "cma" / "vault" / "004-patterns").mkdir(parents=True)
+    (project / "cma" / "vault" / "011-archive").mkdir(parents=True)
     return project
 
 
@@ -34,7 +35,7 @@ def _add_note(
     if created is not None:
         fm["created"] = created.isoformat()
     body = "\n".join(["---"] + [f"{k}: {v}" for k, v in fm.items()] + ["---", "", "Body."])
-    path = project / "vault" / folder / f"{title}.md"
+    path = project / "cma" / "vault" / folder / f"{title}.md"
     path.write_text(body, encoding="utf-8")
     return path
 
@@ -45,7 +46,7 @@ def _add_note(
 def test_archive_note_moves_file_and_sets_status(tmp_path: Path):
     project = _project(tmp_path)
     src = _add_note(project, "003-decisions", "Old", note_type="decision", status="accepted")
-    new_path = archive_note(project / "vault", src)
+    new_path = archive_note(project / "cma" / "vault", src)
     assert not src.exists()
     assert new_path.exists()
     assert new_path.parent.name == "011-archive"
@@ -58,9 +59,9 @@ def test_archive_note_handles_filename_collision(tmp_path: Path):
     project = _project(tmp_path)
     a = _add_note(project, "003-decisions", "Twin")
     # Pre-create a different file at the archive target name.
-    target = project / "vault" / "011-archive" / "Twin.md"
+    target = project / "cma" / "vault" / "011-archive" / "Twin.md"
     target.write_text("# pre-existing", encoding="utf-8")
-    new_path = archive_note(project / "vault", a)
+    new_path = archive_note(project / "cma" / "vault", a)
     assert new_path != target
     assert new_path.exists()
     assert "archived" in new_path.name
@@ -124,7 +125,7 @@ def test_archive_cold_notes_uses_retrieval_log_age(tmp_path: Path):
     # Set older_than_days=1: anything not retrieved in past 24h is stale.
     # "Stale" has no log entry and no created date -> skipped (no age signal).
     # But we want it archived. So give it a created date in the past.
-    stale_path = project / "vault" / "004-patterns" / "Stale.md"
+    stale_path = project / "cma" / "vault" / "004-patterns" / "Stale.md"
     stale_path.write_text(
         "---\ntype: pattern\ntitle: Stale\nstatus: active\ncreated: 2020-01-01T00:00:00\n---\n\nBody.\n",
         encoding="utf-8",

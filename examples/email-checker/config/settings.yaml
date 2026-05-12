@@ -1,0 +1,28 @@
+# Email checker agent settings.
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  max_tokens: 800
+  temperature: 0.2
+
+gmail:
+  credentials_path: .secrets/gmail_oauth.json
+  poll_interval_seconds: 300
+  history_state_path: .state/last_sync.json
+
+classification:
+  confidence_floor: 0.55      # see docs/decisions/classification_thresholds.md
+  trust_ceiling: 0.85
+  long_thread_threshold: 6    # see agent.py
+
+notify:
+  slack:
+    workspace: my-workspace
+    dm_channel_id: D0123456
+    alerts_channel_id: C0234567
+  twilio:
+    from_number: "+15551234567"
+  digest:
+    send_at: "07:00"
+    timezone: America/New_York

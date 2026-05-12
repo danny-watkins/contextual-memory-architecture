@@ -99,13 +99,14 @@ def test_context_efficiency_score():
 
 def _build_project(tmp_path: Path) -> Path:
     project = tmp_path / "agent"
-    (project / "vault" / "003-decisions").mkdir(parents=True)
-    (project / "vault" / "004-patterns").mkdir(parents=True)
-    (project / "cma.config.yaml").write_text(
-        "vault_path: ./vault\nindex_path: ./.cma\nembedding_provider: none\n",
+    (project / "cma" / "vault" / "003-decisions").mkdir(parents=True)
+    (project / "cma" / "vault" / "004-patterns").mkdir(parents=True)
+    (project / "cma").mkdir(parents=True, exist_ok=True)
+    (project / "cma" / "config.yaml").write_text(
+        "vault_path: ./cma/vault\nindex_path: ./cma/cache\nembedding_provider: none\n",
         encoding="utf-8",
     )
-    (project / "vault" / "003-decisions" / "Async Capital Call Processing.md").write_text(
+    (project / "cma" / "vault" / "003-decisions" / "Async Capital Call Processing.md").write_text(
         """---
 type: decision
 title: Async Capital Call Processing
@@ -119,7 +120,7 @@ Uses [[Queue Retry Pattern]].
 """,
         encoding="utf-8",
     )
-    (project / "vault" / "004-patterns" / "Queue Retry Pattern.md").write_text(
+    (project / "cma" / "vault" / "004-patterns" / "Queue Retry Pattern.md").write_text(
         """---
 type: pattern
 title: Queue Retry Pattern
@@ -133,7 +134,7 @@ Used by [[Async Capital Call Processing]].
 """,
         encoding="utf-8",
     )
-    (project / "vault" / "Cooking Rice.md").write_text(
+    (project / "cma" / "vault" / "Cooking Rice.md").write_text(
         "---\ntype: note\ntitle: Cooking Rice\n---\n\nUnrelated content.",
         encoding="utf-8",
     )

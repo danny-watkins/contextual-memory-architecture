@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="5">
+<title>CMA Memory Log</title>
+<style>
+  :root {
+    --bg: #0d0d0d;
+    --surface: #161616;
+    --surface-2: #1f1f1f;
+    --border: #2a2a2a;
+    --border-hover: #3a3a3a;
+    --text: #e5e5e5;
+    --text-dim: #909090;
+    --text-faint: #5a5a5a;
+    --c-retrieve: #4a9eff;
+    --c-search: #888888;
+    --c-record: #4ade80;
+    --c-index: #c084fc;
+    --c-ingest: #14b8a6;
+    --c-bootstrap: #f59e0b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", system-ui, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 32px 24px 48px; }
+  header { margin-bottom: 24px; }
+  h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .subtitle { color: var(--text-dim); font-size: 13px; margin-top: 4px; }
+  .updated { color: var(--text-faint); font-size: 12px; margin-top: 2px; }
+
+  .filters {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 20px;
+    align-items: center;
+  }
+  .filters select, .filters input {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 5px 9px;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+  }
+  .filters input { flex: 1; min-width: 180px; }
+  .filters input:focus, .filters select:focus { border-color: var(--border-hover); }
+  .filters label { color: var(--text-dim); font-size: 12px; display: flex; align-items: center; gap: 6px; }
+
+  .session {
+    margin-bottom: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .session-head {
+    padding: 12px 16px;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid transparent;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .session-head:hover { background: var(--surface-2); }
+  .session.open .session-head { border-bottom-color: var(--border); }
+  .session-caret {
+    color: var(--text-faint);
+    font-size: 12px;
+    transition: transform 0.15s;
+  }
+  .session.open .session-caret { transform: rotate(90deg); }
+  .session-title { font-weight: 500; flex: 1; }
+  .session-meta { color: var(--text-dim); font-size: 12px; }
+  .session-active-pill {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--c-record);
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 500;
+  }
+  .session-body { display: none; }
+  .session.open .session-body { display: block; }
+
+  .event {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 12px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .event:last-child { border-bottom: none; }
+  .event:hover { background: var(--surface-2); }
+  .event-time { color: var(--text-faint); font-variant-numeric: tabular-nums; min-width: 70px; font-size: 12px; padding-top: 2px; }
+  .event-body { flex: 1; min-width: 0; }
+  .event-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .event-pill {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: lowercase;
+    padding: 2px 8px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .event-pill.retrieve  { background: rgba(74, 158, 255, 0.15); color: var(--c-retrieve); }
+  .event-pill.search    { background: rgba(136, 136, 136, 0.18); color: var(--c-search); }
+  .event-pill.record    { background: rgba(74, 222, 128, 0.15); color: var(--c-record); }
+  .event-pill.index     { background: rgba(192, 132, 252, 0.15); color: var(--c-index); }
+  .event-pill.ingest    { background: rgba(20, 184, 166, 0.15); color: var(--c-ingest); }
+  .event-pill.bootstrap { background: rgba(245, 158, 11, 0.15); color: var(--c-bootstrap); }
+  .event-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .event-duration { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .event-artifacts { margin-top: 6px; padding-left: 0; }
+  .event-artifacts li {
+    list-style: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    padding: 1px 0;
+  }
+  .event-artifacts li::before {
+    content: "→ ";
+    color: var(--text-faint);
+  }
+  .artifact-link {
+    color: var(--text);
+    border-bottom: 1px dotted var(--border-hover);
+  }
+  .artifact-link:hover { color: var(--c-retrieve); border-bottom-color: var(--c-retrieve); }
+  .artifact-kind { color: var(--text-faint); font-size: 11px; margin-left: 4px; }
+  .artifact-tokens {
+    color: var(--text-faint);
+    font-size: 11px;
+    margin-left: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .artifact-frag-link {
+    color: var(--c-retrieve);
+    font-size: 11px;
+    margin-left: 8px;
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    text-decoration: none;
+    opacity: 0.7;
+    transition: opacity 0.15s, border-color 0.15s;
+  }
+  .artifact-frag-link:hover {
+    opacity: 1;
+    border-color: var(--c-retrieve);
+    text-decoration: none;
+  }
+  .event-details {
+    display: none;
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-dim);
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .event.expanded .event-details { display: block; }
+
+  .stats {
+    margin-top: 32px;
+    padding: 14px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: 13px;
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .stats .label { color: var(--text-faint); }
+  .stats .value { color: var(--text); font-weight: 500; }
+
+  .empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+  }
+  .empty h2 { font-weight: 500; font-size: 16px; margin-bottom: 8px; color: var(--text); }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>CMA Memory Log <span style="color:var(--text-faint);font-weight:400;">— <span id="project-name"></span></span></h1>
+    <div class="subtitle" id="subtitle"></div>
+    <div class="updated" id="updated"></div>
+  </header>
+
+  <div class="filters">
+    <label><input type="checkbox" id="show-low-level"> show low-level reads</label>
+    <select id="filter-type">
+      <option value="">all event types</option>
+      <option value="retrieve">retrieve</option>
+      <option value="search">search</option>
+      <option value="record">record</option>
+      <option value="index">index</option>
+      <option value="ingest">ingest</option>
+      <option value="bootstrap">bootstrap</option>
+    </select>
+    <select id="filter-session">
+      <option value="">all sessions</option>
+    </select>
+    <input id="filter-query" type="text" placeholder="search queries / titles / task ids...">
+  </div>
+
+  <div id="sessions"></div>
+
+  <div class="stats" id="stats"></div>
+</div>
+
+<script type="application/json" id="payload">{{PAYLOAD_JSON}}</script>
+
+<script>
+const LOW_LEVEL_TYPES = new Set(["get_note", "get_outgoing_links", "get_backlinks", "traverse_graph", "search_by_frontmatter", "reindex"]);
+const TYPE_ORDER = ["retrieve", "search", "record", "index", "ingest", "bootstrap"];
+
+const payload = JSON.parse(document.getElementById("payload").textContent);
+const events = payload.events || [];
+
+function fmtRelative(iso) {
+  const t = Date.parse(iso); const now = Date.now();
+  const sec = Math.round((now - t) / 1000);
+  if (sec < 5) return "just now";
+  if (sec < 60) return sec + "s ago";
+  const min = Math.round(sec / 60);
+  if (min < 60) return min + "m ago";
+  const hr = Math.round(min / 60);
+  if (hr < 24) return hr + "h ago";
+  const day = Math.round(hr / 24);
+  return day + "d ago";
+}
+
+function fmtTimeOnly(iso) {
+  const d = new Date(iso);
+  return d.toTimeString().slice(0, 8);
+}
+
+function fmtSessionTitle(sessionId) {
+  // Two id formats supported:
+  //   - Claude Code (UUID-ish): "87aee6fc-cba9-4def-8acd-..." -> show first 8 chars
+  //   - CMA process default:    "20260509-183000-pid12345"     -> show date/time
+  const tsMatch = sessionId.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
+  if (tsMatch) return `${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]} ${tsMatch[4]}:${tsMatch[5]}`;
+  if (sessionId.length > 12) return sessionId.slice(0, 12) + "…";
+  return sessionId;
+}
+
+function escapeHtml(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
+
+function artifactLink(artifact) {
+  // artifact: {title, path, kind, tokens_extracted?, tokens_total?, percent?, fragments?, spec_path?}
+  // Two links per source artifact when a spec_path is present:
+  //   1. The artifact title -> opens the SOURCE note in Obsidian (full context)
+  //   2. "view fragments" -> opens the SPEC.md in Obsidian, where the extracted
+  //      paragraphs for this source appear under a `### From [[title]]` heading.
+  const absSource = (payload.vault_path + "/" + artifact.path).replace(/\\/g, "/");
+  const sourceUrl = `obsidian://open?path=${encodeURIComponent(absSource)}`;
+  const kind = artifact.kind ? `<span class="artifact-kind">(${escapeHtml(artifact.kind)})</span>` : "";
+
+  let tokens = "";
+  if (typeof artifact.tokens_extracted === "number") {
+    const pct = typeof artifact.percent === "number" ? artifact.percent : 0;
+    const frags = artifact.fragments ? `, ${artifact.fragments} frag${artifact.fragments === 1 ? "" : "s"}` : "";
+    tokens = `<span class="artifact-tokens">· ${artifact.tokens_extracted}/${artifact.tokens_total} tokens (${pct}%${frags})</span>`;
+  }
+
+  let fragLink = "";
+  if (artifact.spec_path) {
+    const absSpec = (payload.vault_path + "/" + artifact.spec_path).replace(/\\/g, "/");
+    const specUrl = `obsidian://open?path=${encodeURIComponent(absSpec)}`;
+    fragLink = ` <a class="artifact-frag-link" href="${escapeHtml(specUrl)}" title="open the spec.md and jump to this source's fragments">view fragments</a>`;
+  }
+
+  return `<a class="artifact-link" href="${escapeHtml(sourceUrl)}" title="${escapeHtml(absSource)}">${escapeHtml(artifact.title)}</a>${kind}${tokens}${fragLink}`;
+}
+
+function renderEvent(ev) {
+  const time = fmtTimeOnly(ev.ts);
+  const pill = `<span class="event-pill ${ev.type}">${escapeHtml(ev.type)}</span>`;
+  const summary = escapeHtml(ev.summary || ev.query || ev.task_id || "");
+  const dur = ev.duration_ms ? `<span class="event-duration">${(ev.duration_ms / 1000).toFixed(2)}s</span>` : "";
+  let artifactsHtml = "";
+  if (ev.artifacts && ev.artifacts.length) {
+    const items = ev.artifacts.map(a => `<li>${artifactLink(a)}</li>`).join("");
+    artifactsHtml = `<ul class="event-artifacts">${items}</ul>`;
+  }
+  const detailsBlock = (ev.details || ev.query) ?
+    `<div class="event-details">${escapeHtml(JSON.stringify(ev.details || {query: ev.query, task_id: ev.task_id}, null, 2))}</div>` : "";
+  return `
+    <div class="event" data-type="${escapeHtml(ev.type)}" data-text="${escapeHtml((ev.query || "") + " " + (ev.task_id || "") + " " + (ev.summary || "")).toLowerCase()}">
+      <div class="event-time">${escapeHtml(time)}</div>
+      <div class="event-body">
+        <div class="event-line">${pill}<div class="event-summary">${summary}</div>${dur}</div>
+        ${artifactsHtml}
+        ${detailsBlock}
+      </div>
+    </div>`;
+}
+
+function groupBySession(events) {
+  const groups = new Map();
+  for (const ev of events) {
+    const sid = ev.session_id || "unknown";
+    if (!groups.has(sid)) groups.set(sid, []);
+    groups.get(sid).push(ev);
+  }
+  // Sort sessions by the timestamp of their most recent event, newest first.
+  // We can't rely on session_id ordering because Claude Code uses UUID-style IDs
+  // (random) while the CMA process default uses timestamp-style IDs (sortable).
+  // Sorting by recent activity works regardless of the id format.
+  return [...groups.entries()].sort((a, b) => {
+    const lastA = a[1][a[1].length - 1].ts;
+    const lastB = b[1][b[1].length - 1].ts;
+    return lastB.localeCompare(lastA);
+  });
+}
+
+function render() {
+  document.getElementById("project-name").textContent = payload.project_name;
+  const total = events.length;
+  const sessions = groupBySession(events);
+  const lastTs = events.length ? events[events.length - 1].ts : null;
+  const subtitle = `${total} event${total === 1 ? "" : "s"} · ${sessions.length} session${sessions.length === 1 ? "" : "s"}` +
+    (lastTs ? ` · last activity ${fmtRelative(lastTs)}` : "");
+  document.getElementById("subtitle").textContent = subtitle;
+  document.getElementById("updated").textContent = `Generated ${fmtRelative(payload.generated_at)} · auto-refreshes every 5 seconds`;
+
+  // populate session filter
+  const sel = document.getElementById("filter-session");
+  // keep first option, replace others
+  sel.length = 1;
+  for (const [sid] of sessions) {
+    const opt = document.createElement("option");
+    opt.value = sid;
+    opt.textContent = fmtSessionTitle(sid);
+    sel.appendChild(opt);
+  }
+
+  // build session blocks
+  const showLowLevel = document.getElementById("show-low-level").checked;
+  const filterType = document.getElementById("filter-type").value;
+  const filterSession = document.getElementById("filter-session").value;
+  const filterQuery = document.getElementById("filter-query").value.trim().toLowerCase();
+
+  const container = document.getElementById("sessions");
+  if (events.length === 0) {
+    container.innerHTML = `<div class="empty"><h2>No events yet</h2>The memory log fills in as the agent searches, retrieves, and records. Run "add cma" then ask the agent to retrieve something.</div>`;
+    document.getElementById("stats").innerHTML = "";
+    return;
+  }
+
+  let html = "";
+  let mostRecentSid = sessions.length ? sessions[0][0] : null;
+  for (const [sid, evs] of sessions) {
+    if (filterSession && sid !== filterSession) continue;
+    const visible = evs.filter(ev => {
+      if (!showLowLevel && LOW_LEVEL_TYPES.has(ev.type)) return false;
+      if (filterType && ev.type !== filterType) return false;
+      if (filterQuery) {
+        const text = ((ev.query || "") + " " + (ev.task_id || "") + " " + (ev.summary || "")).toLowerCase();
+        if (!text.includes(filterQuery)) return false;
+      }
+      return true;
+    });
+    if (visible.length === 0) continue;
+    const isActive = sid === mostRecentSid;
+    const startTs = evs[0].ts;
+    const endTs = evs[evs.length - 1].ts;
+    const durMin = Math.max(1, Math.round((Date.parse(endTs) - Date.parse(startTs)) / 60000));
+    const openClass = sessionStorage.getItem("session-" + sid) === "closed" ? "" : "open";
+    const activePill = isActive ? `<span class="session-active-pill">active</span>` : "";
+    html += `
+      <div class="session ${openClass}" data-sid="${escapeHtml(sid)}">
+        <div class="session-head" onclick="toggleSession('${escapeHtml(sid)}')">
+          <span class="session-caret">▶</span>
+          <div class="session-title">Session ${escapeHtml(fmtSessionTitle(sid))}</div>
+          <span class="session-meta">${visible.length} event${visible.length === 1 ? "" : "s"} · ${durMin} min</span>
+          ${activePill}
+        </div>
+        <div class="session-body">
+          ${visible.map(renderEvent).join("")}
+        </div>
+      </div>`;
+  }
+  container.innerHTML = html || `<div class="empty">No events match the current filters.</div>`;
+
+  // attach click handlers for expanding events
+  container.querySelectorAll(".event").forEach(el => {
+    el.addEventListener("click", () => el.classList.toggle("expanded"));
+  });
+
+  // stats
+  const counts = {};
+  for (const ev of events) counts[ev.type] = (counts[ev.type] || 0) + 1;
+  const statsHtml = TYPE_ORDER.filter(t => counts[t]).map(t =>
+    `<span><span class="label">${t}:</span> <span class="value">${counts[t]}</span></span>`
+  ).join("");
+  document.getElementById("stats").innerHTML = statsHtml;
+}
+
+function toggleSession(sid) {
+  const el = document.querySelector(`.session[data-sid="${sid}"]`);
+  if (!el) return;
+  el.classList.toggle("open");
+  sessionStorage.setItem("session-" + sid, el.classList.contains("open") ? "open" : "closed");
+}
+
+// Restore scroll on load, save on unload
+window.addEventListener("DOMContentLoaded", () => {
+  render();
+  document.getElementById("show-low-level").addEventListener("change", render);
+  document.getElementById("filter-type").addEventListener("change", render);
+  document.getElementById("filter-session").addEventListener("change", render);
+  document.getElementById("filter-query").addEventListener("input", render);
+  // restore filters
+  const savedQ = sessionStorage.getItem("filter-query");
+  if (savedQ) { document.getElementById("filter-query").value = savedQ; render(); }
+  // restore scroll
+  const y = parseInt(sessionStorage.getItem("scroll-y") || "0", 10);
+  if (y > 0) window.scrollTo(0, y);
+});
+window.addEventListener("beforeunload", () => {
+  sessionStorage.setItem("scroll-y", String(window.scrollY));
+  sessionStorage.setItem("filter-query", document.getElementById("filter-query").value);
+});
+</script>
+</body>
+</html>

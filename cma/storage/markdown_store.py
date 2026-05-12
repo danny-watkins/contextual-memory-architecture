@@ -41,13 +41,35 @@ def _coerce_tags(value) -> list[str]:
 
 
 def parse_note(vault_path: Path, file_path: Path) -> MemoryRecord:
-    """Parse a single markdown file into a MemoryRecord."""
+    """Parse a single markdown file into a MemoryRecord.
+
+    Tolerant of malformed YAML frontmatter: if PyYAML raises on a file (for
+    example, an unescaped Windows path in a quoted scalar), we fall back to
+    treating the file as if it had no frontmatter at all -- the body still
+    participates in retrieval, the note still becomes a graph node, and one
+    bad file no longer takes the whole vault offline.
+    """
     vault_path = Path(vault_path)
     file_path = Path(file_path)
-    with open(file_path, "r", encoding="utf-8") as f:
-        post = frontmatter.load(f)
-    fm = dict(post.metadata)
-    body = post.content
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            post = frontmatter.load(f)
+        fm = dict(post.metadata)
+        body = post.content
+    except Exception:
+        # Read the raw file, strip a leading frontmatter block heuristically, keep the body.
+        try:
+            raw = file_path.read_text(encoding="utf-8")
+        except Exception:
+            raw = ""
+        fm = {}
+        body = raw
+        if raw.startswith("---\n"):
+            # Drop the first --- ... --- block; everything after is the body.
+            rest = raw[4:]
+            end = rest.find("\n---\n")
+            if end != -1:
+                body = rest[end + 5:]
 
     rel_path = file_path.relative_to(vault_path).as_posix()
     raw_type = fm.get("type", "note")
@@ -84,6 +106,35 @@ def walk_vault(vault_path: Path) -> list[Path]:
 
 
 def parse_vault(vault_path: Path) -> list[MemoryRecord]:
-    """Parse every markdown note in the vault."""
+    """Parse every markdown note in the vault.
+
+    Best-effort: any per-file failure that parse_note's own fallback also can't
+    rescue (e.g. unreadable bytes) is swallowed -- one bad note must not take
+    the whole vault offline. Skipped paths are accessible via the optional
+    sidecar list returned alongside the records if a caller passes
+    `return_skipped=True`; here we just drop them silently.
+    """
     vault_path = Path(vault_path)
-    return [parse_note(vault_path, p) for p in walk_vault(vault_path)]
+    out: list[MemoryRecord] = []
+    for p in walk_vault(vault_path):
+        try:
+            out.append(parse_note(vault_path, p))
+        except Exception:
+            continue
+    return out
+
+
+def update_frontmatter(file_path: Path, updates: dict) -> None:
+    """Merge `updates` into a note's YAML frontmatter and write back in place.
+
+    Used by the Retriever to stamp `last_retrieved_at` and `retrieve_count` on
+    notes that contributed to a Context Spec. The body is preserved exactly.
+    """
+    file_path = Path(file_path)
+    with open(file_path, "r", encoding="utf-8") as f:
+        post = frontmatter.load(f)
+    for key, value in updates.items():
+        post[key] = value
+    with open(file_path, "w", encoding="utf-8", newline="\n") as f:
+        f.write(frontmatter.dumps(post))
+        f.write("\n")

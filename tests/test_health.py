@@ -9,18 +9,19 @@ from cma.health import THRESHOLDS, health_report, log_retrieval, read_retrieval_
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "agent"
     project.mkdir()
-    (project / "cma.config.yaml").write_text(
-        "vault_path: ./vault\nindex_path: ./.cma\nembedding_provider: none\n",
+    (project / "cma").mkdir(parents=True, exist_ok=True)
+    (project / "cma" / "config.yaml").write_text(
+        "vault_path: ./cma/vault\nindex_path: ./cma/cache\nembedding_provider: none\n",
         encoding="utf-8",
     )
-    (project / "vault" / "003-decisions").mkdir(parents=True)
-    (project / "vault" / "004-patterns").mkdir(parents=True)
-    (project / ".cma" / "state").mkdir(parents=True)
-    (project / "vault" / "003-decisions" / "Decision A.md").write_text(
+    (project / "cma" / "vault" / "003-decisions").mkdir(parents=True)
+    (project / "cma" / "vault" / "004-patterns").mkdir(parents=True)
+    (project / "cma" / "cache" / "state").mkdir(parents=True)
+    (project / "cma" / "vault" / "003-decisions" / "Decision A.md").write_text(
         "---\ntype: decision\ntitle: Decision A\nstatus: accepted\n---\n\nLinks to [[Pattern X]].\n",
         encoding="utf-8",
     )
-    (project / "vault" / "004-patterns" / "Pattern X.md").write_text(
+    (project / "cma" / "vault" / "004-patterns" / "Pattern X.md").write_text(
         "---\ntype: pattern\ntitle: Pattern X\nstatus: active\n---\n\nA pattern body.\n",
         encoding="utf-8",
     )
@@ -74,7 +75,7 @@ def test_log_retrieval_appends_jsonl(tmp_path: Path):
         token_estimate=200,
         fragment_count=4,
     )
-    events = read_retrieval_log(project / ".cma" / "state")
+    events = read_retrieval_log(project / "cma" / "cache" / "state")
     assert len(events) == 2
     assert events[0]["query"] == "test query"
     assert events[1]["fragment_count"] == 4
@@ -101,7 +102,7 @@ def test_health_report_with_retrieval_log(tmp_path: Path):
 def test_health_warnings_for_broken_links(tmp_path: Path):
     project = _project(tmp_path)
     # Add a note with a broken link to push broken_link_rate above threshold.
-    (project / "vault" / "Bad.md").write_text(
+    (project / "cma" / "vault" / "Bad.md").write_text(
         "---\ntype: note\n---\n\nLinks to [[Nonexistent One]] and [[Nonexistent Two]].\n",
         encoding="utf-8",
     )
@@ -126,10 +127,10 @@ def test_health_thresholds_are_documented():
 def test_health_index_byte_counts(tmp_path: Path):
     project = _project(tmp_path)
     # Drop a file in each index folder so we can verify they get counted.
-    bm25_dir = project / ".cma" / "bm25"
+    bm25_dir = project / "cma" / "cache" / "bm25"
     bm25_dir.mkdir(parents=True)
     (bm25_dir / "index.pkl").write_bytes(b"x" * 1000)
-    emb_dir = project / ".cma" / "embeddings"
+    emb_dir = project / "cma" / "cache" / "embeddings"
     emb_dir.mkdir(parents=True)
     (emb_dir / "embeddings.npy").write_bytes(b"y" * 2000)
     (emb_dir / "meta.json").write_text(
@@ -149,8 +150,8 @@ def test_retriever_logs_retrieval_calls(tmp_path: Path):
     project = _project(tmp_path)
     retriever = Retriever.from_project(project)
     retriever.retrieve("decision A")
-    log_path = project / ".cma" / "state" / "retrieval_log.jsonl"
+    log_path = project / "cma" / "cache" / "state" / "retrieval_log.jsonl"
     assert log_path.exists()
-    events = read_retrieval_log(project / ".cma" / "state")
+    events = read_retrieval_log(project / "cma" / "cache" / "state")
     assert len(events) >= 1
     assert events[0]["query"] == "decision A"

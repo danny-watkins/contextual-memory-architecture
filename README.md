@@ -1,303 +1,175 @@
 # Contextual Memory Architecture (CMA)
 
-> A lightweight memory layer each agent carries with it. Local-first, Obsidian-compatible, fractal-by-design.
+> A memory layer your agent carries with it. Local-first, Obsidian-compatible, fractal-by-design.
 
-CMA is a memory architecture small enough to live next to a single agent. Each agent gets its own Obsidian-compatible vault, a graph-aware retrieval engine, and a structured way to record what it learns - so the next task starts smarter than the last. No shared cloud brain, no central server, no cross-agent contamination by default.
+**Status: v0.5 alpha · under active development**
 
-**Repository promise: add a persistent contextual memory layer to your agent without rewriting your agent.**
+Architecture is settled (see [whitepaper](docs/CMA_Whitepaper_v0.5.pdf)). The full pipeline — hybrid retrieval, graph traversal, fragment extraction, Context Spec assembly, persisted memory, auto-firing hooks, and a live verification dashboard — works end-to-end on the included [email-checker demo](examples/email-checker/). 190 tests pass. Not yet battle-tested across diverse agent shapes, large vaults, or many users. Looking for collaborators and early adopters to season it.
 
-**Docs:** [Technical Whitepaper (PDF)](docs/CMA_Whitepaper_v0.4.pdf) · [Intro Slideshow (PDF)](docs/CMA_Slideshow_v0.4.pdf)
+[Whitepaper (PDF)](docs/CMA_Whitepaper_v0.5.pdf) · [Slideshow (PDF)](docs/CMA_Slideshow_v0.5.pdf) · [Demo agent](examples/email-checker/) · [Session log](SESSION_LOG.md)
 
-## Why
+---
 
-Most AI agents are stateless. They forget prior decisions, project conventions, what worked, and what failed. Standard RAG helps a little, but agent memory is relational and cumulative - the most useful context isn't the nearest vector chunk, it's a decision linked to a project or a postmortem linked to a failure mode.
+## What it does
 
-CMA reframes memory as three intelligent functions:
+Most AI agents are stateless. They forget prior decisions, project conventions, what worked, what failed. Standard RAG helps a little, but agent memory is **relational and cumulative** — the most useful context is not the nearest vector chunk, it's the decision linked to a project or the postmortem linked to a failure mode.
 
-- **Reasoner** - frames the goal, decides what context matters
-- **Retriever** - converts long-term memory into task-specific context specs (graph + hybrid search)
-- **Recorder** - converts completed work into structured, durable memory
+CMA gives any agent a persistent memory layer it carries through every session:
 
-The vault is just markdown files with wikilinks. You can open it in Obsidian, version it with git, and grep it from the command line. Indexes are derived and rebuildable - delete `.cma/` and rebuild from the vault any time.
+- **Reasoner** — your agent. Frames the goal, decides what context matters.
+- **Retriever** — converts long-term memory into task-specific Context Specs via hybrid scoring (BM25 + embeddings) + graph traversal + paragraph-level fragment extraction.
+- **Recorder** — converts completed work into structured durable memory under a confidence-gated write policy.
 
-## Lightweight, per-agent, fractal-by-design
-
-CMA is meant to be the memory layer a single agent **carries with it** - small enough that every agent in a system can have its own.
-
-- **Per-agent vaults are the unit.** An agent's vault holds its own decisions, sessions, patterns, and project context. Two agents working in the same system don't pollute each other's memory; their experiences stay separate unless explicitly shared.
-- **The architecture is fractal.** A vault is a graph of notes. Nothing stops a vault itself from becoming a single node in a larger graph - a system-level or network-level memory graph that links agents instead of notes. The same primitives (graph traversal, hybrid search, fragment extraction, context spec assembly) apply at any scale.
-- **What that unlocks (future direction).** Multi-agent systems where the Retriever traverses across agent boundaries when context demands it. Cross-agent provenance. Network-wide pattern recognition. Selective memory federation - one agent loaning a slice of its graph to another for the duration of a task. CMA v0.3 is the per-agent foundation; the fractal layer is on the roadmap.
-
-The local-first, markdown-as-canonical design exists precisely so this composes cleanly: a vault is a portable artifact, an MCP server is a portable interface, and a graph of vaults is just another graph.
-
-## Status
-
-**v0.3.0 - Phases 1-9 functional.** Retrieval, recording, MCP server, eval harness, memory health observability, and lifecycle curation (archive + supersede) are all wired up.
-
-| Phase | Description                                       | Status   |
-|-------|---------------------------------------------------|----------|
-| 1     | Skeleton, schemas, config, CLI shell              | done     |
-| 2     | Markdown vault parser (frontmatter + wikilinks)   | done     |
-| 3     | Graph index + health report                       | done     |
-| 4     | Hybrid retrieval (BM25 + embeddings + graph)      | done     |
-| 5     | Recorder (sessions, decisions, patterns, daily)   | done     |
-| 6     | MCP server (10 tools, stdio transport)            | done     |
-| 7     | Evaluation harness (Modes A/B/C/D, retrieval metrics) | done |
-| 8     | Memory health + observability (`cma health`, retrieval log, context % gauge) | done |
-| 9     | Memory lifecycle (`cma archive`, `cma supersede`) | done     |
+The vault is plain markdown with `[[wikilinks]]`. Open it in Obsidian. Version it with git. Grep it from the shell. Derived indexes live in `cma/cache/` and are rebuildable from the vault at any time.
 
 ## Install
 
 ```bash
-git clone <this-repo>
+git clone https://github.com/danny-watkins/contextual-memory-architecture.git
 cd contextual-memory-architecture
-
-# Core install (BM25-only retrieval, no embedding deps)
-pip install -e .
-
-# Add local embeddings (sentence-transformers, ~500MB with PyTorch)
-pip install -e ".[embeddings]"
-
-# Add OpenAI embeddings instead
-pip install -e ".[openai]"
-
-# Add MCP server support (for Claude Code integration)
-pip install -e ".[mcp]"
-
-# Everything
 pip install -e ".[all]"
 ```
 
-## Quickstart
+Optional dependency groups: `[embeddings]` (sentence-transformers for hybrid retrieval), `[openai]` (OpenAI embeddings), `[mcp]` (MCP server for Claude Code).
+
+## Quickstart — one command
 
 ```bash
-# 1. Initialize a project
-cma init my-agent
-cd my-agent
-
-# 2. Configure agent integration + embedding provider
-cma setup
-
-# 3. Add markdown notes anywhere under vault/, link them with wikilinks
-
-# 4. Train the memory graph (parse, build graph, BM25, embeddings)
-cma index
-
-# 5. Inspect graph structure
-cma graph health
-
-# 6. Query the memory layer
-cma retrieve "what do we know about capital call processing?"
-cma retrieve "..." --json --save retriever/specs/CMA-001.json
-
-# 7. Record what an agent learned
-cma record path/to/completion_package.yaml
-
-# 8. Run a benchmark suite
-cma evals run examples/benchmark.yaml --mode graphrag
-
-# 9. Serve over MCP for Claude Code
-cma mcp serve --project .
-
-# 10. Inspect memory health (vault size, index footprint, graph density, retrieval activity)
-cma health
-
-# 11. Curate cold memory (archive cold patterns older than 90 days, dry run first)
-cma archive --type pattern --older-than 90 --dry-run
-cma supersede "Old Decision" --by "New Decision"
+cd /path/to/your-agent-project
+cma add
 ```
 
-### The training phase
+`cma add` is the single command that wires CMA into any agent project. It:
 
-`cma index` is the training phase for your memory graph. It:
+1. Scaffolds `cma/` (vault, config, cache, memory_log) under your project root
+2. Copies the bundled Obsidian graph config so the visualization works on first open
+3. Ingests your project's source files into `cma/vault/020-sources/`
+4. Builds the BM25 index + embeddings + graph state
+5. Writes `CLAUDE.md` (with the CMA prompt block between markers), `.claude/agents/cma-*.md` (four pre-built sub-agents), and `.claude/settings.json` (auto-firing hooks)
+6. Registers the CMA MCP server in `.mcp.json`
 
-1. Parses every markdown note in the vault, extracts frontmatter, follows wikilinks
-2. Builds a directed graph keyed by note (NetworkX)
-3. Builds a BM25 lexical index over titles and bodies
-4. Computes embeddings (if a provider is configured) for semantic search
+After `cma add`, **restart Claude Code in the project directory** so the project-scope MCP server and hooks load.
 
-Outputs land in `.cma/`:
-- `.cma/graph/nodes.json` - node manifest
-- `.cma/bm25/index.pkl` - tokenized corpus
-- `.cma/embeddings/embeddings.npy` - vector matrix
-- `.cma/embeddings/doc_ids.json` - row-to-record mapping
-- `.cma/embeddings/meta.json` - provider/model/dimension
+Then open these in parallel as you work:
 
-Re-running is cheap and idempotent. The whole `.cma/` directory is rebuildable from the markdown vault.
+- The agent in Claude Code — runs as usual; memory is auto-loaded before every prompt and auto-captured at session end
+- The memory log dashboard at `cma/memory_log/dashboard.html` — auto-refreshing every 5 seconds, every search/retrieve/record event with clickable artifact links
+- The Obsidian graph view on `cma/vault/` — see the memory structure visually; new Context Specs appear as red nodes
 
-### Connecting your agent
+## How auto-firing works
 
-`cma setup` walks you through connecting CMA to your agent. The three options:
+CMA registers two hooks with Claude Code (project-scope `.claude/settings.json`):
 
-1. **Claude Code (MCP)** - the recommended path for most users. Register the CMA MCP server in your Claude Code config; the agent calls retrieve/record/graph tools directly during a session. See [MCP server](#mcp-server) below.
-2. **Python SDK** - import `cma` directly in your agent code. See [Python API](#python-api).
-3. **Generic CLI** - shell out to `cma retrieve` from any agent framework.
+- **`UserPromptSubmit` → `cma hook user-prompt`** runs the full Retriever pipeline on every prompt and injects the rendered Context Spec as pre-turn context. The agent always starts with relevant memory loaded; it doesn't need to remember to ask for it.
+- **`Stop` → `cma hook stop`** captures a session summary to `cma/vault/002-sessions/`.
 
-The setup command also configures your embedding provider:
-- `sentence-transformers` (local, default, no API key) - install with `pip install '.[embeddings]'`
-- `openai` (cloud) - install with `pip install '.[openai]'`, set `OPENAI_API_KEY`
-- `none` - BM25 lexical search only
+Per-hook cost is ~2-3 seconds (loading the embedding model into a fresh Python process). Falls inside the agent's normal first-token latency.
 
-## Project Layout
+For deeper retrievals or deliberate writes, the agent still uses MCP tools (`mcp__cma__retrieve`, `mcp__cma__record_completion`, etc.) or invokes one of the bundled sub-agents (`cma-retriever`, `cma-recorder`, `cma-curator`, `cma-bootstrap`).
+
+## Project layout after `cma add`
 
 ```
-my-agent/
-  cma.config.yaml        # vault path, retrieval defaults, recorder policy
-  vault/                 # canonical memory (Obsidian-compatible markdown)
-    000-inbox/
-    001-projects/
-    002-sessions/
-    003-decisions/
-    004-patterns/
-    ...
-  reasoner/              # task frames, prompts, policies
-  retriever/             # context specs, graph reports
-  recorder/              # completion packages, write logs
-  .cma/                  # derived indexes (rebuildable)
-    graph/
-    bm25/
-    embeddings/
+your-agent/
+  CLAUDE.md              # your agent's instructions (CMA block merged between markers)
+  .claude/agents/        # four CMA sub-agents
+  .claude/settings.json  # CMA hooks registered
+  .mcp.json              # CMA MCP server registered
+  cma/
+    config.yaml
+    vault/               # canonical markdown memory + .obsidian/ config bundled
+      000-inbox/ ... 020-sources/
+    cache/               # BM25, embeddings, graph state (derived from vault)
+    memory_log/
+      activity.jsonl     # append-only event stream
+      dashboard.html     # live visual viewer
+      write_logs/  proposals/
 ```
+
+Three top-level subdirectories under `cma/`: `vault/` (canonical), `cache/` (derived), `memory_log/` (operational). The three Claude Code files at the project root are required by the host runtime.
+
+## CLI reference
+
+| Command | Purpose |
+|---------|---------|
+| `cma add [path] [--user]` | One-shot install: scaffold + wire prompt, sub-agents, MCP, hooks |
+| `cma init <path>` | Scaffold only (vault + config). Used internally by `cma add` |
+| `cma init-claude` | Write a global CMA hint into `~/.claude/CLAUDE.md` so any session can install via "add CMA" |
+| `cma setup [path]` | Interactive: integration + embedding provider |
+| `cma index [path] [--no-embeddings]` | Rebuild BM25, embeddings, graph from the vault |
+| `cma ingest-folder <src> --project <p>` | Pull external source files into the vault |
+| `cma retrieve "<query>"` | Run the Retriever, emit a Context Spec |
+| `cma record <package.yaml>` | Recorder ingestion (confidence-gated writes) |
+| `cma mcp serve --project <p>` | Start MCP server over stdio |
+| `cma activity [--watch]` | Tail the memory log in the terminal |
+| `cma health [--json]` | Vault stats + retrieval activity |
+| `cma archive --type T --older-than D` | Archive cold notes |
+| `cma supersede "Old" --by "New"` | Mark decision superseded |
+| `cma graph health [path]` | Graph structure report |
+| `cma evals run <bench.yaml>` | Run benchmark suite |
+| `cma version` | Print installed version |
+
+## MCP tools available to the agent
+
+Six graph primitives and four orchestrators, exposed over stdio:
+
+- `search_notes(query, top_k)` — hybrid lexical + semantic search
+- `get_note(title)` — fetch a single note's body, frontmatter, and links
+- `get_outgoing_links(title)` / `get_backlinks(title)` — neighborhood navigation
+- `traverse_graph(start, depth)` — BFS within N hops
+- `search_by_frontmatter(key, value)` — metadata filter
+- `retrieve(query, max_depth, beam_width)` — full Retriever pipeline, returns rendered Context Spec
+- `record_completion(yaml_str, dry_run)` — write decisions/patterns/sessions under the confidence-gated policy
+- `graph_health()` — structural report
+- `reindex()` — rebuild in-memory state after vault changes
+
+## What's in the bundled demo
+
+`examples/email-checker/` is a small Python agent project (a Gmail triage agent stub) that exists to exercise CMA end-to-end. It has its own `CLAUDE.md`, `agent.py`, `skills/`, `prompts/`, `docs/decisions/`, etc. — the kind of structure a real agent project might have. Run `cma add` inside it and you have a working memory layer + dashboard + Obsidian graph view in one minute.
 
 ## Concepts
 
 - **Memory** is durable stored experience: markdown notes in the vault.
 - **Context** is the temporary working set built for a specific task.
-- **Context spec** is a structured artifact - retrieved fragments, relationship map, provenance, scores. Inspectable, debuggable, testable.
-- **Memory graph** is built from wikilinks; nodes carry frontmatter as metadata.
+- **Context Spec** is a structured artifact (`vault/008-context-specs/spec-XXXXXXXX.md`) — retrieved fragments, relationship map, provenance, scores. Inspectable, debuggable, citable in `[[wikilink]]` form.
+- **Fragment** is a single paragraph (or short section) of text the Retriever decided was relevant. The Retriever cherry-picks paragraphs — it does not paste whole notes into the spec.
+- **The GraphRAG flywheel**: every Retriever fire persists a new spec note. Future retrieves can find prior specs as relevant sources. Memory compounds across turns.
 
-The Retriever pipeline:
+## Honest about where this is
 
-```
-hybrid seed search (BM25 + embeddings)
-  -> beam-pruned graph traversal (max_depth, beam_width)
-  -> per-node hybrid + metadata-boost + depth-decay scoring
-  -> paragraph-level fragment extraction
-  -> cross-node fragment deduplication
-  -> ContextSpec
-```
+**What works:**
+- Hybrid retrieval, graph traversal, fragment extraction, Context Spec assembly
+- Auto-firing hooks (Claude Code)
+- Confidence-gated recorder (decisions, patterns, sessions, daily logs)
+- Auto-related linking between decisions/patterns (BM25 lookup at write time)
+- Inbox prompt capture + curator promotion
+- Live memory log dashboard (static HTML, no server)
+- Obsidian graph visualization with bundled color groups
+- Bundled MCP server + four sub-agents
+- 190 tests across the engine
 
-The full whitepaper lives in `WHITEPAPER.md` (coming soon).
+**What's not done:**
+- Fragment-level scoring is still BM25-only (node-level hybrid scoring works; fragment-level embedding pending)
+- Not benchmarked at scale — only validated on the demo project and small vaults. The 100K-note scaling numbers in the slideshow are projections from algorithmic complexity, not measurements.
+- MCP server events sit in their own session block in the dashboard (separate from Claude Code session block) because there's no shared session_id channel
+- The `cma-curator` sub-agent's noise-promotion mechanism is defined but not yet automated
+- No PyPI release yet — install from source via `pip install -e .`
 
-## Python API
+See [SESSION_LOG.md](SESSION_LOG.md) for the full state-of-build, open threads, and where to start contributing.
 
-```python
-from cma import Recorder, Retriever, render_markdown
-from cma.schemas import CompletionPackage, Decision
+## Lightweight, per-agent, fractal-by-design
 
-# Retrieval
-retriever = Retriever.from_project("./my-agent")
-spec = retriever.retrieve(
-    "what do we know about capital call processing?",
-    max_depth=2,
-    beam_width=5,
-)
-for frag in spec.fragments:
-    print(frag.source_node, frag.node_score, frag.text[:100])
-print(render_markdown(spec))  # inspectable markdown form
+CMA is meant to be the memory layer a single agent **carries with it** — small enough that every agent in a system can have its own.
 
-# Recording
-recorder = Recorder.from_project("./my-agent")
-package = CompletionPackage(
-    task_id="CMA-2026-0001",
-    goal="Diagnose slow processing",
-    summary="Synchronous fund-admin API in hot path",
-    decisions=[Decision(
-        title="Move to async queue",
-        status="accepted",
-        confidence=0.86,
-        rationale="Queue isolates external API latency from request path",
-    )],
-)
-result = recorder.record_completion(package)
-print(result.summary())
-```
+- **Per-agent vaults are the unit.** Two agents working in the same system don't pollute each other's memory.
+- **Fractal architecture.** A vault is a graph of notes. Nothing stops a vault itself from becoming a single node in a larger graph — a network-level memory graph that links agents. The same primitives apply at any scale. Future direction (see whitepaper §7.2).
 
-## MCP server
+## Contributing
 
-CMA exposes ten tools over MCP for any agent that speaks the protocol (Claude Code, the Anthropic SDK, etc.):
+Early stage. Open an issue before a large PR so we can shape direction together. The [SESSION_LOG.md](SESSION_LOG.md) lists current open threads ranked by payoff. Smaller items: typos, doc fixes, additional test coverage — feel free to PR directly.
 
-**Graph primitives** (composable, fine-grained):
-- `search_notes` - hybrid search returning top-k matches
-- `get_note` - fetch full note content
-- `get_outgoing_links` / `get_backlinks` - follow wikilinks
-- `traverse_graph` - notes within N hops
-- `search_by_frontmatter` - filter by YAML metadata
-
-**Higher-level orchestrators** (one-shot):
-- `retrieve` - full Retriever pipeline returning a markdown Context Spec
-- `record_completion` - Recorder ingestion
-- `graph_health` - graph health report
-- `reindex` - refresh the in-memory index after vault changes
-
-To wire into Claude Code, add to `~/.claude/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "cma": {
-      "command": "cma",
-      "args": ["mcp", "serve", "--project", "/absolute/path/to/your/cma-project"]
-    }
-  }
-}
-```
-
-## Memory health and scaling
-
-You cannot have infinite learned memory. CMA gives you the dashboards and the curation tools to keep memory honest.
-
-**`cma health`** reports four things at a glance:
-
-- **Vault size** — total notes, bytes on disk, breakdown by folder
-- **Index footprint** — graph + BM25 + embedding bytes (so you can see what `.cma/` actually costs)
-- **Graph density** — nodes, edges, average out-degree, orphan rate, broken-link rate
-- **Retrieval activity** — total events, last-7-day rate, most-retrieved notes, never-retrieved count
-
-It also flags soft warnings when you cross thresholds: vault > 50K notes, embeddings > 200 MB, orphan rate > 30%, broken-link rate > 5%, never-retrieved rate > 70% (when you have actual retrieval history).
-
-**Context budget gauge** runs after every `cma retrieve` so you can see how much of the 8K-token default budget the spec actually consumed:
-
-```
-Context budget [#######-----------------------]  1,847 / 8,000 tokens (23%)  | 6 fragments from 4 notes
-```
-
-**Retrieval logging** is automatic. Every `retrieve()` call appends a JSON line to `.cma/state/retrieval_log.jsonl` with timestamp, query, fragment count, token estimate, and the notes that surfaced. Health reports compute "never retrieved" and "most retrieved" off this log.
-
-**Curation tools** (Phase 9):
-
-- `cma archive --type pattern --older-than 90` — moves cold pattern notes older than 90 days into `vault/011-archive/` and sets their frontmatter `status: archived`. Use `--dry-run` to preview. Filter by `--type` and `--status`. Cold-ness is measured against the retrieval log; notes with no retrieval history fall back to their `created` frontmatter date. Notes with no signal at all are skipped (we won't blindly archive what we can't date).
-- `cma supersede "Old Decision" --by "New Decision"` — marks the old decision as superseded, adds `superseded_by` and `superseded_at` to its frontmatter, and appends a `[[New Decision]]` link to its body. Both notes must already exist.
-
-**Realistic per-vault scaling** (single agent, single laptop):
-
-| Vault size | Markdown | Embeddings (MiniLM 384d) | RAM at runtime | Query latency |
-|---|---|---|---|---|
-| 1K notes | ~10 MB | ~1.5 MB | ~50 MB | <50 ms |
-| 10K notes | ~100 MB | ~15 MB | ~250 MB | <100 ms |
-| 100K notes | ~1 GB | ~150 MB | ~1.5 GB | ~500 ms |
-| 1M notes | ~10 GB | ~1.5 GB | ~10+ GB | seconds (would need ANN) |
-
-For long-lived agents that write daily, you want to combine `cma archive` (drop cold notes), `cma supersede` (mark stale decisions), and the fractal model (shard by domain when one vault gets big) rather than letting any single graph grow without bound.
-
-## Design principles
-
-- **Lightweight.** Small enough to live next to a single agent; pure-Python core, no daemons, no schema migrations.
-- **Per-agent memory.** Each agent gets its own vault. No shared global brain by default.
-- **Fractal-ready.** A vault is a graph of notes; a graph of vaults is just another graph. Same primitives compose upward.
-- **Local-first.** No server, no cloud (unless you opt into OpenAI embeddings). The vault is yours.
-- **Inspectable.** Memory is markdown. Open it in Obsidian, grep it, version it.
-- **Framework-agnostic.** CLI, Python SDK, MCP. Bring your own agent.
-- **Rebuildable indexes.** `.cma/` is derived state. Canonical truth is markdown.
-- **Pluggable embeddings.** Default is local sentence-transformers; OpenAI is a one-line config swap; or implement the `Embedder` protocol for your own.
-
-## Development
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE) — Copyright (c) 2026 Danny Watkins.

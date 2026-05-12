@@ -121,8 +121,8 @@ def test_policy_pattern_tentative_proposes_when_approval_required():
 def _project(tmp_path: Path) -> Path:
     project = tmp_path / "agent"
     (project / "vault").mkdir(parents=True)
-    (project / "recorder" / "memory_write_proposals").mkdir(parents=True)
-    (project / "recorder" / "write_logs").mkdir(parents=True)
+    (project / "cma" / "memory_log" / "proposals").mkdir(parents=True)
+    (project / "cma" / "memory_log" / "write_logs").mkdir(parents=True)
     return project
 
 
@@ -130,8 +130,8 @@ def test_record_writes_session_and_daily_log(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
-        write_logs_path=project / "recorder" / "write_logs",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
+        write_logs_path=project / "cma" / "memory_log" / "write_logs",
     )
     package = _package()
     result = recorder.record_completion(package)
@@ -150,7 +150,7 @@ def test_record_writes_accepted_decision(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
     )
     package = _package(
         decisions=[
@@ -182,7 +182,7 @@ def test_record_skips_low_confidence_pattern(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
     )
     package = _package(
         patterns=[Pattern(title="weak hunch", confidence=0.15)],
@@ -196,7 +196,7 @@ def test_record_proposes_weak_decision(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
     )
     package = _package(
         decisions=[
@@ -206,22 +206,23 @@ def test_record_proposes_weak_decision(tmp_path: Path):
     result = recorder.record_completion(package)
     proposal_path = (
         project
-        / "recorder"
-        / "memory_write_proposals"
+        / "cma"
+        / "memory_log"
+        / "proposals"
         / "decisions"
         / "weak proposal.md"
     )
     assert proposal_path.exists()
     assert proposal_path in result.proposed
     # Should NOT be in vault
-    assert not (project / "vault" / "003-decisions" / "weak proposal.md").exists()
+    assert not (project / "cma" / "vault" / "003-decisions" / "weak proposal.md").exists()
 
 
 def test_record_skips_duplicate_decision(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
     )
     package = _package(
         decisions=[Decision(title="dup", status="accepted", confidence=0.9)]
@@ -236,7 +237,7 @@ def test_record_dry_run_writes_nothing(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
     )
     package = _package(
         decisions=[Decision(title="dry one", status="accepted", confidence=0.9)],
@@ -252,7 +253,7 @@ def test_record_drafts_tentative_pattern(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
         config=RecorderConfig(require_human_approval_for=[]),
     )
     package = _package(
@@ -268,7 +269,7 @@ def test_record_links_decisions_in_session_note(tmp_path: Path):
     project = _project(tmp_path)
     recorder = Recorder(
         vault_path=project / "vault",
-        proposals_path=project / "recorder" / "memory_write_proposals",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
     )
     package = _package(
         decisions=[
@@ -328,3 +329,111 @@ def test_sanitize_filename_handles_empty():
 def test_sanitize_filename_truncates_long_titles():
     long = "a" * 500
     assert len(sanitize_filename(long)) == 100
+
+
+# ---------- auto-related links ----------
+
+
+def test_decision_with_no_existing_notes_has_no_related_section(tmp_path: Path):
+    project = _project(tmp_path)
+    recorder = Recorder(
+        vault_path=project / "vault",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
+    )
+    package = _package(
+        decisions=[
+            Decision(
+                title="Move capital call processing to async queue",
+                status="accepted",
+                confidence=0.86,
+                rationale="Synchronous calls cap latency at fund-admin API.",
+            )
+        ]
+    )
+    recorder.record_completion(package)
+    decision_text = (project / "vault" / "003-decisions" /
+                     "Move capital call processing to async queue.md").read_text(encoding="utf-8")
+    assert "## Related" not in decision_text
+
+
+def test_second_related_decision_links_to_first(tmp_path: Path):
+    """When a new decision overlaps with an existing one, the new note should link to the existing one."""
+    project = _project(tmp_path)
+    recorder = Recorder(
+        vault_path=project / "vault",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
+    )
+
+    first = _package(
+        decisions=[
+            Decision(
+                title="Move capital call processing to async queue",
+                status="accepted",
+                confidence=0.9,
+                rationale="Sync fund-admin API calls dominate capital call latency.",
+            )
+        ]
+    )
+    recorder.record_completion(first)
+
+    second = CompletionPackage(
+        task_id="CMA-2026-0002",
+        goal="Pick a queue backend for the async capital call work",
+        summary="Selected Redis Streams over RabbitMQ.",
+        decisions=[
+            Decision(
+                title="Use Redis Streams for capital call queue",
+                status="accepted",
+                confidence=0.85,
+                rationale="Capital call queue needs ordering and replay; Redis Streams gives both.",
+            )
+        ],
+        context_usage=ContextUsage(),
+    )
+    recorder.record_completion(second)
+
+    new_text = (project / "vault" / "003-decisions" /
+                "Use Redis Streams for capital call queue.md").read_text(encoding="utf-8")
+    assert "## Related" in new_text
+    assert "[[Move capital call processing to async queue]]" in new_text
+
+
+def test_unrelated_decision_does_not_get_spurious_links(tmp_path: Path):
+    """A new decision on an unrelated topic should not link to the existing one."""
+    project = _project(tmp_path)
+    recorder = Recorder(
+        vault_path=project / "vault",
+        proposals_path=project / "cma" / "memory_log" / "proposals",
+    )
+
+    first = _package(
+        decisions=[
+            Decision(
+                title="Move capital call processing to async queue",
+                status="accepted",
+                confidence=0.9,
+                rationale="Sync fund-admin API calls dominate capital call latency.",
+            )
+        ]
+    )
+    recorder.record_completion(first)
+
+    second = CompletionPackage(
+        task_id="CMA-2026-0003",
+        goal="Pick a logging library for the new web frontend",
+        summary="Chose pino over winston.",
+        decisions=[
+            Decision(
+                title="Use pino for frontend structured logging",
+                status="accepted",
+                confidence=0.8,
+                rationale="Pino has lower overhead and better JSON output.",
+            )
+        ],
+        context_usage=ContextUsage(),
+    )
+    recorder.record_completion(second)
+
+    new_text = (project / "vault" / "003-decisions" /
+                "Use pino for frontend structured logging.md").read_text(encoding="utf-8")
+    assert "## Related" not in new_text

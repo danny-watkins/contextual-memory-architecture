@@ -28,8 +28,8 @@ class RecorderConfig(BaseModel):
 
 
 class CMAConfig(BaseModel):
-    vault_path: str = "./vault"
-    index_path: str = "./.cma"
+    vault_path: str = "./cma/vault"
+    index_path: str = "./cma/cache"
     embedding_provider: str = "sentence-transformers"
     embedding_model: str = "all-MiniLM-L6-v2"
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
@@ -43,7 +43,7 @@ class CMAConfig(BaseModel):
 
     @classmethod
     def from_project(cls, project_path: Path) -> "CMAConfig":
-        config_path = Path(project_path) / "cma.config.yaml"
+        config_path = Path(project_path) / "cma" / "config.yaml"
         if config_path.exists():
             return cls.from_file(config_path)
         return cls()

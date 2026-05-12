@@ -36,8 +36,9 @@ except ImportError as e:
         "Install with: pip install 'contextual-memory-architecture[mcp]'"
     ) from e
 
+from cma.activity import log_activity
 from cma.recorder import Recorder
-from cma.retriever import Retriever, render_markdown
+from cma.retriever import Retriever, per_source_token_artifacts, render_markdown
 from cma.retriever.traversal import traverse
 from cma.schemas.completion_package import CompletionPackage
 from cma.schemas.memory_record import MemoryRecord
@@ -90,8 +91,10 @@ def search_notes(query: str, top_k: int = 5) -> list[dict[str, Any]]:
     seed a multi-hop walk: agents typically call this first, then expand
     outward with get_outgoing_links / get_backlinks / traverse_graph.
     """
+    import time as _time
     _ensure_loaded()
     assert _RETRIEVER is not None
+    started = _time.perf_counter()
     seeds = _RETRIEVER._select_seeds(
         query, top_k=top_k, alpha=_RETRIEVER.config.alpha, node_threshold=0.0
     )
@@ -109,6 +112,14 @@ def search_notes(query: str, top_k: int = 5) -> list[dict[str, Any]]:
                 "tags": rec.tags,
             }
         )
+    duration_ms = (_time.perf_counter() - started) * 1000
+    log_activity(
+        _PROJECT_PATH, "search",
+        duration_ms=duration_ms,
+        query=query,
+        summary=f'"{query}" -> {len(out)} hits' + (f', top {out[0]["score"]:.2f}' if out else ""),
+        details={"top_k": top_k, "results": [{"title": h["title"], "score": h["score"], "type": h["type"]} for h in out]},
+    )
     return out
 
 
@@ -227,10 +238,58 @@ def retrieve(
     Use this when you want one-shot retrieval; use the lower-level primitives
     when you want to drive the walk yourself (mid-inference tool calls).
     """
+    import time as _time
     _ensure_loaded()
     assert _RETRIEVER is not None
+    started = _time.perf_counter()
     spec = _RETRIEVER.retrieve(query, max_depth=max_depth, beam_width=beam_width)
+    duration_ms = (_time.perf_counter() - started) * 1000
+
+    artifacts: list[dict] = []
+    spec_id = spec.spec_id
+    if spec_id:
+        artifacts.append({
+            "title": spec_id,
+            "path": f"008-context-specs/{spec_id}.md",
+            "kind": "spec",
+        })
+    # Per-source token artifacts: for each source node the retriever pulled
+    # fragments from, how many tokens it extracted and what fraction of the
+    # source note's total token count that represents. Surfaces in the dashboard
+    # as "use_gmail_api · 312 tokens · 37% of doc".
+    source_artifacts = per_source_token_artifacts(
+        spec, _RETRIEVER.records_by_id, vault_path=_RETRIEVER.vault_path
+    )
+    artifacts.extend(source_artifacts)
+    total_tokens_pulled = sum(a.get("tokens_extracted", 0) for a in source_artifacts)
+
+    log_activity(
+        _PROJECT_PATH, "retrieve",
+        duration_ms=duration_ms,
+        query=query,
+        summary=f'"{query}" -> {len(source_artifacts)} sources, {total_tokens_pulled} tokens, depth {max_depth}',
+        artifacts=artifacts,
+        details={
+            "max_depth": max_depth,
+            "beam_width": beam_width,
+            "n_sources": len(source_artifacts),
+            "n_fragments": len(spec.fragments),
+            "total_tokens_extracted": total_tokens_pulled,
+        },
+    )
     return render_markdown(spec)
+
+
+def _vault_relative(path: str) -> str:
+    """Best-effort: convert an absolute vault path to a vault-relative one."""
+    if _PROJECT_PATH is None:
+        return path
+    p = Path(path)
+    vault = _PROJECT_PATH / "cma" / "vault"
+    try:
+        return p.resolve().relative_to(vault.resolve()).as_posix()
+    except ValueError:
+        return path
 
 
 @mcp.tool()
@@ -242,11 +301,36 @@ def record_completion(
     Returns counts of written / proposed / skipped items and their paths.
     Set dry_run=True to preview without touching disk.
     """
+    import time as _time
     _ensure_loaded()
     assert _RECORDER is not None
+    started = _time.perf_counter()
     data = yaml.safe_load(completion_package_yaml)
     package = CompletionPackage(**data)
     result = _RECORDER.record_completion(package, dry_run=dry_run)
+    duration_ms = (_time.perf_counter() - started) * 1000
+
+    if not dry_run:
+        artifacts: list[dict[str, str]] = []
+        for p in result.written:
+            p_obj = Path(p)
+            kind = "decision" if "003-decisions" in p_obj.as_posix() else \
+                   "pattern" if "004-patterns" in p_obj.as_posix() else \
+                   "session" if "002-sessions" in p_obj.as_posix() else \
+                   "daily" if "010-daily-log" in p_obj.as_posix() else "note"
+            artifacts.append({"title": p_obj.stem, "path": _vault_relative(str(p)), "kind": kind})
+        for p in result.proposed:
+            p_obj = Path(p)
+            artifacts.append({"title": p_obj.stem, "path": _vault_relative(str(p)), "kind": "proposed"})
+        log_activity(
+            _PROJECT_PATH, "record",
+            duration_ms=duration_ms,
+            task_id=package.task_id,
+            summary=f"task: {package.task_id} -> {len(result.written)} written, {len(result.proposed)} proposed, {len(result.skipped)} skipped",
+            artifacts=artifacts,
+            details={"written": len(result.written), "proposed": len(result.proposed), "skipped": len(result.skipped)},
+        )
+
     return {
         "summary": result.summary(),
         "written": [str(p) for p in result.written],
@@ -287,12 +371,13 @@ def reindex() -> dict[str, Any]:
 
 
 def run_server(project_path: Path) -> None:
-    """Initialize the Retriever/Recorder and run the MCP server over stdio."""
+    """Run the MCP server over stdio. Retriever/Recorder load lazily on first tool call."""
     global _PROJECT_PATH
     _PROJECT_PATH = Path(project_path).resolve()
-    _ensure_loaded()
     # Log to stderr so it doesn't pollute the stdio JSON-RPC stream.
-    print(f"[cma] MCP server ready (project={_PROJECT_PATH})", file=sys.stderr)
+    # Heavy init (embedding model, BM25) is deferred to the first tool call so the
+    # MCP `initialize` handshake completes within the client's connect timeout.
+    print(f"[cma] MCP server ready (project={_PROJECT_PATH}, lazy init)", file=sys.stderr)
     mcp.run(transport="stdio")
 
 

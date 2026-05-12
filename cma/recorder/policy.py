@@ -23,7 +23,7 @@ class WriteDecision(str, Enum):
 
     WRITE = "write"      # write to the vault as active
     DRAFT = "draft"      # write to the vault but mark status=draft
-    PROPOSE = "propose"  # write to recorder/memory_write_proposals/ for human review
+    PROPOSE = "propose"  # write to cma/memory_log/proposals/ for human review
     SKIP = "skip"        # do not write at all
 
 

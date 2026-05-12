@@ -60,8 +60,8 @@ class Recorder:
         config = CMAConfig.from_project(project_path).resolve_paths(project_path)
         return cls(
             vault_path=Path(config.vault_path),
-            proposals_path=project_path / "recorder" / "memory_write_proposals",
-            write_logs_path=project_path / "recorder" / "write_logs",
+            proposals_path=project_path / "cma" / "memory_log" / "proposals",
+            write_logs_path=project_path / "cma" / "memory_log" / "write_logs",
             config=config.recorder,
         )
 
@@ -79,8 +79,49 @@ class Recorder:
 
     # ----- internal -----
 
+    def _build_related_finder(self):
+        """Return a function (text, top_k=3, threshold=0.4) -> [title] over existing decisions/patterns.
+
+        Returns a no-op function if the vault is missing or contains no decisions/patterns yet.
+        """
+        try:
+            from cma.retriever.lexical import BM25Index
+            from cma.storage.markdown_store import parse_vault
+        except Exception:
+            return lambda text, top_k=3, threshold=0.4: []
+
+        if not self.vault_path.exists():
+            return lambda text, top_k=3, threshold=0.4: []
+
+        records = parse_vault(self.vault_path)
+        existing = [r for r in records if r.type in ("decision", "pattern")]
+        if not existing:
+            return lambda text, top_k=3, threshold=0.4: []
+
+        index = BM25Index(existing)
+        title_by_id = {r.record_id: r.title for r in existing}
+
+        def find_related(text: str, top_k: int = 3, threshold: float = 0.4) -> list[str]:
+            results = index.search(text, top_k=top_k * 2)
+            out: list[str] = []
+            for record_id, score in results:
+                if score < threshold:
+                    continue
+                title = title_by_id.get(record_id)
+                if title:
+                    out.append(title)
+                if len(out) >= top_k:
+                    break
+            return out
+
+        return find_related
+
     def _process_decisions(
-        self, package: CompletionPackage, dry_run: bool, result: RecorderResult
+        self,
+        package: CompletionPackage,
+        dry_run: bool,
+        result: RecorderResult,
+        find_related,
     ) -> list[str]:
         """Write decisions according to policy. Returns the titles linked from the session."""
         linked_titles: list[str] = []
@@ -110,12 +151,18 @@ class Recorder:
                 if action == WriteDecision.PROPOSE
                 else None
             )
+            related = find_related(
+                f"{decision.title}\n{decision.rationale or ''}"
+            )
+            # Don't link a note to itself if a same-title note somehow exists
+            related = [t for t in related if t != decision.title]
             path, status = write_decision(
                 self.vault_path,
                 decision,
                 package,
                 status_override=status_override,
                 proposal_dir=proposal_dir,
+                related_titles=related or None,
             )
             if path is None:
                 result.skipped.append((label, status))
@@ -128,7 +175,11 @@ class Recorder:
         return linked_titles
 
     def _process_patterns(
-        self, package: CompletionPackage, dry_run: bool, result: RecorderResult
+        self,
+        package: CompletionPackage,
+        dry_run: bool,
+        result: RecorderResult,
+        find_related,
     ) -> list[str]:
         linked_titles: list[str] = []
         for pattern in package.patterns:
@@ -157,12 +208,16 @@ class Recorder:
                 if action == WriteDecision.PROPOSE
                 else None
             )
+            evidence_text = "\n".join(pattern.evidence) if pattern.evidence else ""
+            related = find_related(f"{pattern.title}\n{evidence_text}")
+            related = [t for t in related if t != pattern.title]
             path, status = write_pattern(
                 self.vault_path,
                 pattern,
                 package,
                 status_override=status_override,
                 proposal_dir=proposal_dir,
+                related_titles=related or None,
             )
             if path is None:
                 result.skipped.append((label, status))
@@ -225,8 +280,11 @@ class Recorder:
           5. Write log (JSONL audit trail), unless dry_run
         """
         result = RecorderResult()
-        decision_titles = self._process_decisions(package, dry_run, result)
-        pattern_titles = self._process_patterns(package, dry_run, result)
+        # Build the related-title finder once over the current vault state.
+        # Best-effort: returns no-op if vault empty or BM25 unavailable.
+        find_related = self._build_related_finder()
+        decision_titles = self._process_decisions(package, dry_run, result, find_related)
+        pattern_titles = self._process_patterns(package, dry_run, result, find_related)
         self._write_session_and_log(
             package, decision_titles, pattern_titles, dry_run, result
         )
