@@ -1,19 +1,19 @@
 # Documentation
 
 - **[CMA_Whitepaper_v0.5.pdf](CMA_Whitepaper_v0.5.pdf)** — full technical reference. Architecture, every phase, every CLI command, every schema, configuration reference, ADRs, scaling tables, glossary. Read this if you're implementing or extending CMA.
+- **[CMA_Slideshow_v0.5.pdf](CMA_Slideshow_v0.5.pdf)** — 17-slide intro deck. Lighter, more visual. Read this first if you just want to know what CMA is and how to drop it into your project.
 
-A slideshow PDF is in progress and will land in a future commit.
+## Regenerating the PDFs
 
-## Regenerating the whitepaper
-
-The whitepaper PDF is programmatically generated from `build_whitepaper.py`. Regenerated on each release so it stays in sync with the code.
+Both PDFs are programmatically generated from the scripts in this directory. Regenerated on each release so they stay in sync with the code.
 
 ```bash
 pip install reportlab>=4
 python docs/build_whitepaper.py    # → docs/CMA_Whitepaper_v0.5.pdf
+python docs/build_slideshow.py     # → docs/CMA_Slideshow_v0.5.pdf
 ```
 
-The version number in the filename and document body is sourced from the `VERSION` constant at the top of the script. Bump it when you cut a new release.
+Version numbers in filenames and document bodies are sourced from the `VERSION` / `OUT` constants at the top of each script. Bump them when you cut a new release.
 
 ## Why ReportLab and not Markdown → Pandoc
 

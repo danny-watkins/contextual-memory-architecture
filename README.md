@@ -6,7 +6,7 @@
 
 Architecture is settled (see [whitepaper](docs/CMA_Whitepaper_v0.5.pdf)). The full pipeline — hybrid retrieval, graph traversal, fragment extraction, Context Spec assembly, persisted memory, auto-firing hooks, and a live verification dashboard — works end-to-end on the included [email-checker demo](examples/email-checker/). 190 tests pass. Not yet battle-tested across diverse agent shapes, large vaults, or many users. Looking for collaborators and early adopters to season it.
 
-[Whitepaper (PDF)](docs/CMA_Whitepaper_v0.5.pdf) · [Demo agent](examples/email-checker/) · [Session log](SESSION_LOG.md)
+[Whitepaper (PDF)](docs/CMA_Whitepaper_v0.5.pdf) · [Slideshow (PDF)](docs/CMA_Slideshow_v0.5.pdf) · [Demo agent](examples/email-checker/) · [Session log](SESSION_LOG.md)
 
 ---
 

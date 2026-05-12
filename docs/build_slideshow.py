@@ -350,64 +350,71 @@ def slide_scoring(c, n, total) -> None:
     page_chrome(c, n, total)
     draw_text(c, "Hybrid scoring with depth decay.", MARGIN_X, 6.5 * inch,
               font="Helvetica-Bold", size=42, color=INK)
-    # Equations centered
-    eq_y = 5.3 * inch
+    draw_text(c, "Lexical + semantic, modulated by metadata and depth.",
+              MARGIN_X, 6.5 * inch - 34, font="Helvetica", size=15, color=DIM)
+    # Equations
+    eq_y = 5.45 * inch
     eq_x = MARGIN_X
     c.setFillColor(INK)
     c.setFont("Helvetica", 22)
     c.drawString(eq_x, eq_y,
                  "node_score   =   alpha . semantic   +   (1 - alpha) . lexical")
-    c.drawString(eq_x, eq_y - 50,
-                 "final_score  =   node_score  .  metadata_boost  .  decay ^ depth")
-    # Defaults block
-    box_y = 3.6 * inch
+    c.drawString(eq_x, eq_y - 44,
+                 "final_score  =   node_score  *  metadata_boost  *  decay ^ depth")
+    # Defaults block (left)
+    box_y = 3.8 * inch
     c.setStrokeColor(RULE)
     c.setLineWidth(0.6)
     box_x = MARGIN_X
     box_w = 4.6 * inch
-    box_h = 2.0 * inch
+    box_h = 1.8 * inch
     c.rect(box_x, box_y - box_h, box_w, box_h, fill=0, stroke=1)
     c.setFillColor(DIM)
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(box_x + 14, box_y - 24, "DEFAULTS")
+    c.drawString(box_x + 14, box_y - 22, "DEFAULTS")
     defaults = [
         "alpha = 0.7              decay = 0.80",
         "node_threshold = 0.30    beam_width = 5",
         "fragment_threshold = 0.42  max_depth = 2",
     ]
-    dy = box_y - 50
+    dy = box_y - 46
     for d in defaults:
         c.setFillColor(TEXT)
         c.setFont("Courier", 13)
         c.drawString(box_x + 14, dy, d)
         dy -= 20
-    # Boost table on right
+    # Boost table (right) -- multipliers, clamped at 0
     btx = MARGIN_X + 5.0 * inch
-    bty = 3.6 * inch
+    bty = 3.8 * inch
     btw = 5.5 * inch
-    bth = 2.0 * inch
+    bth = 2.55 * inch
     c.rect(btx, bty - bth, btw, bth, fill=0, stroke=1)
     c.setFillColor(DIM)
     c.setFont("Helvetica-Bold", 11)
-    c.drawString(btx + 14, bty - 24, "METADATA BOOSTS")
+    c.drawString(btx + 14, bty - 22, "METADATA BOOSTS  (multiplicative, clamped at 0)")
     rows = [
-        ("accepted decision",      "+0.10"),
-        ("superseded decision",    "-0.50"),
-        ("human_verified",         "+0.10"),
-        ("confidence >= 0.85",     "+0.08"),
+        ("accepted decision",      "x 1.10"),
+        ("rejected decision",      "x 0.70"),
+        ("superseded decision",    "x 0.50"),
+        ("archived (any type)",    "x 0.80"),
+        ("human_verified",         "x 1.10"),
+        ("confidence >= 0.85",     "x 1.08"),
+        ("confidence <  0.30",     "x 0.90"),
     ]
-    ry = bty - 50
+    ry = bty - 46
     for label, val in rows:
         c.setFillColor(TEXT)
-        c.setFont("Helvetica", 13)
+        c.setFont("Helvetica", 12)
         c.drawString(btx + 14, ry, label)
         c.setFillColor(ACCENT)
-        c.setFont("Courier-Bold", 13)
+        c.setFont("Courier-Bold", 12)
         c.drawRightString(btx + btw - 14, ry, val)
-        ry -= 22
-    # Footer note
+        ry -= 18
+    # Footer notes (two lines)
+    draw_text(c, "If either modality is 0 (e.g. embedder disabled), the score falls back to whichever is non-zero. No missing-modality penalty.",
+              MARGIN_X, 1.45 * inch, font="Helvetica-Oblique", size=11, color=DIM)
     draw_text(c, "node_threshold gates SEEDS only - traversed nodes earn inclusion via graph adjacency.",
-              MARGIN_X, 1.2 * inch, font="Helvetica-Oblique", size=12, color=DIM)
+              MARGIN_X, 1.15 * inch, font="Helvetica-Oblique", size=11, color=DIM)
 
 
 def slide_traversal(c, n, total) -> None:
@@ -810,6 +817,100 @@ def slide_get_started(c, n, total) -> None:
               MARGIN_X, 1.5 * inch, font="Helvetica", size=14, color=DIM)
 
 
+def slide_smarter_fewer_tokens(c, n, total) -> None:
+    """The dual-purpose value slide: learned memory + token economy.
+
+    Numbers are real measurements from one retrieve on the email-checker demo
+    project (10 sources cited for the query "what does notify.py do"). Logged in
+    cma/memory_log/activity.jsonl; per-source breakdown matches the dashboard
+    screenshots referenced in SESSION_LOG.md.
+    """
+    page_chrome(c, n, total)
+    draw_text(c, "Smarter agents, fewer tokens.", MARGIN_X, 6.5 * inch,
+              font="Helvetica-Bold", size=42, color=INK)
+    draw_text(c, "Same mechanism does both: cherry-pick fragments, persist what was learned.",
+              MARGIN_X, 6.5 * inch - 34, font="Helvetica", size=15, color=DIM)
+
+    # Two-point lead-in
+    point_y = 5.3 * inch
+    c.setFillColor(ACCENT)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(MARGIN_X, point_y, "->  MEMORY COMPOUNDS")
+    c.setFillColor(DIM)
+    c.setFont("Helvetica", 13)
+    c.drawString(MARGIN_X + 0.3 * inch, point_y - 22,
+                 "Decisions, patterns, and postmortems from prior sessions surface")
+    c.drawString(MARGIN_X + 0.3 * inch, point_y - 40,
+                 "automatically on the next relevant task. The agent inherits its own work.")
+
+    point_y -= 78
+    c.setFillColor(ACCENT)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(MARGIN_X, point_y, "->  CONTEXT IS CHERRY-PICKED")
+    c.setFillColor(DIM)
+    c.setFont("Helvetica", 13)
+    c.drawString(MARGIN_X + 0.3 * inch, point_y - 22,
+                 "Fragment-level extraction, not whole-document dumping. The Retriever")
+    c.drawString(MARGIN_X + 0.3 * inch, point_y - 40,
+                 "ranks paragraphs against the query and pulls only what's relevant.")
+
+    # Measurement box -- left half
+    box_y = 2.95 * inch
+    c.setStrokeColor(RULE)
+    c.setLineWidth(0.6)
+    bx = MARGIN_X
+    bw = 5.3 * inch
+    bh = 1.7 * inch
+    c.rect(bx, box_y - bh, bw, bh, fill=0, stroke=1)
+    c.setFillColor(DIM)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(bx + 14, box_y - 22, "DEMO MEASUREMENT")
+    c.setFillColor(DIM)
+    c.setFont("Helvetica-Oblique", 11)
+    c.drawString(bx + 14, box_y - 38, "email-checker, one retrieve, 10 sources cited")
+    # Numbers
+    nums = [
+        ("Source bodies (total)",        "2,697 tokens"),
+        ("Fragments extracted",          "1,038 tokens"),
+        ("Reduction",                    "61.5 %"),
+    ]
+    ny = box_y - 64
+    for label, val in nums:
+        c.setFillColor(TEXT)
+        c.setFont("Helvetica", 13)
+        c.drawString(bx + 14, ny, label)
+        c.setFillColor(ACCENT)
+        c.setFont("Courier-Bold", 14)
+        c.drawRightString(bx + bw - 14, ny, val)
+        ny -= 22
+
+    # Architectural bound box -- right half
+    rbx = MARGIN_X + 5.7 * inch
+    rby = 2.95 * inch
+    rbw = 4.8 * inch
+    rbh = 1.7 * inch
+    c.rect(rbx, rby - rbh, rbw, rbh, fill=0, stroke=1)
+    c.setFillColor(DIM)
+    c.setFont("Helvetica-Bold", 11)
+    c.drawString(rbx + 14, rby - 22, "ARCHITECTURAL BOUND")
+    c.setFillColor(TEXT)
+    c.setFont("Helvetica", 12)
+    lines = [
+        "Output size is bounded by configuration",
+        "(beam_width, max_depth, max_fragments_per_node),",
+        "not by vault size. Cost per query stays flat",
+        "as memory grows.",
+    ]
+    ly = rby - 46
+    for line in lines:
+        c.drawString(rbx + 14, ly, line)
+        ly -= 18
+
+    # Footer note
+    draw_text(c, "Measurement from cma/memory_log/activity.jsonl on the email-checker demo.  Your mileage will vary with vault and query.",
+              MARGIN_X, 0.95 * inch, font="Helvetica-Oblique", size=10, color=DIM)
+
+
 SLIDES = [
     slide_title,
     slide_thesis,
@@ -826,6 +927,7 @@ SLIDES = [
     slide_health,
     slide_scaling,
     slide_what_its_not,
+    slide_smarter_fewer_tokens,
     slide_get_started,
 ]
 
