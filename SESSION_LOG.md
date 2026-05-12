@@ -12,7 +12,7 @@ CMA is a working drop-in memory layer that auto-fires on every Claude Code task,
 
 **Source of truth:** `docs/CMA_Whitepaper_v0.5.pdf` (built from `docs/build_whitepaper.py`).
 
-**Reference install:** `C:\Users\danny\OneDrive\Desktop\email-checker\` — a stand-in agent project where we exercise CMA end-to-end.
+**Reference install:** `examples/email-checker/` — a stand-in agent project we use to exercise CMA end-to-end. Run `cma add` inside that directory after `pip install -e ".[all]"` to see the full loop.
 
 **Status:** all 190 tests pass. Architecture matches the whitepaper. Both the auto-fire hook AND the MCP tools are wired and producing real Context Specs with extracted fragments.
 
@@ -118,27 +118,15 @@ If you come back fresh and want to continue:
    - Cleanest payoff: thread #6 (clean up ingest attribution at source) — improves all future retrievals
    - Most useful UX polish: thread #2 (dashboard source ordering)
    - Most demanding: thread #1 (fragment-level hybrid scoring) — a real architectural enhancement
-3. The email-checker demo is at `C:\Users\danny\OneDrive\Desktop\email-checker\` and ready for further test prompts
-4. Dashboard: `file:///C:/Users/danny/OneDrive/Desktop/email-checker/cma/memory_log/dashboard.html`
+3. The email-checker demo lives at `examples/email-checker/` -- run `cma add` inside it after the editable pip install
+4. Dashboard will appear at `examples/email-checker/cma/memory_log/dashboard.html` after `cma add` runs
 
 ---
 
 ## File map cheat sheet
 
-- Engine: `cma/cma/` (config, hooks, activity, cli, mcp/, recorder/, retriever/, storage/)
-- Bundle (ships with `cma add`): `cma/cma/_bundle/{agents,prompts,obsidian,memory_log}/`
-- Whitepaper source: `cma/docs/build_whitepaper.py`
-- Tests: `cma/tests/`
-- Demo agent: `C:\Users\danny\OneDrive\Desktop\email-checker\`
-
----
-
-## Recent feedback memories captured
-
-In `C:\Users\danny\.claude\projects\C--Users-danny-OneDrive-Desktop-claude-projects\memory\`:
-
-- `feedback_dont_default_to_hooks.md` — bundle for availability, hooks for invocation. Both used; don't conflate.
-- `feedback_commit_dont_overquestion.md` — propose plan and start, reserve AskUserQuestion for binary forks
-- `feedback_writing_style.md` — no em-dashes, no AI-isms, short sentences
-- `project_cma.md` — project context, whitepaper as source of truth
-- `feedback_project_organization.md` — Danny's desktop is the OneDrive-synced one
+- Engine: `cma/` (config, hooks, activity, cli, mcp/, recorder/, retriever/, storage/)
+- Bundle (ships with `cma add`): `cma/_bundle/{agents,prompts,obsidian,memory_log}/`
+- Whitepaper source: `docs/build_whitepaper.py`
+- Tests: `tests/`
+- Demo agent: `examples/email-checker/`
