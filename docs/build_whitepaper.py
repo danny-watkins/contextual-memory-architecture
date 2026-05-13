@@ -666,6 +666,18 @@ def build_story() -> list:
 
     s.append(Paragraph("5.1&nbsp;&nbsp;Confidence calibration", H2))
     s.append(para(
+        "Each item in a CompletionPackage carries a confidence value in [0, 1]. "
+        "This value is the host agent's self-assessment of how strongly the "
+        "evidence supports the record, not a quantity CMA computes internally. "
+        "The Recorder sub-agent's prompt instructs the host model to assign "
+        "confidence by source: an item explicitly stated by a human earns the "
+        "highest band; an inference grounded in concrete in-session evidence "
+        "earns a middle band; a weakly-supported guess earns a low band. The "
+        "Recorder then routes each item by its self-reported confidence, forcing "
+        "the agent to commit to a number rather than treating every output as "
+        "equally trustworthy."
+    ))
+    s.append(para(
         "We use a confidence band model. Records with confidence below 0.25 are "
         "considered noise and skipped. Confidence in [0.25, 0.50) indicates weak "
         "signal: such records are routed to proposals (human approval gate). "
