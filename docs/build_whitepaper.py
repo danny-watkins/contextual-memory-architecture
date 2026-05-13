@@ -968,7 +968,58 @@ def build_story() -> list:
        "cma/: vault (canonical), cache (derived), memory_log (operational). The three "
        "Claude Code files at the project root are required by the host runtime."))
 
-    s.append(Paragraph("6.2&nbsp;&nbsp;Derived state and operational logs", H2))
+    s.append(Paragraph("6.2&nbsp;&nbsp;Initial ingestion and training", H2))
+    s.append(para(
+        "The <font name='Courier'>cma add</font> command populates an empty vault "
+        "by walking the host project and normalizing each source file into a "
+        "vault-compatible markdown note under "
+        "<font name='Courier'>vault/020-sources/&lt;project&gt;/</font>. Markdown "
+        "files are inlined natively to preserve wikilink resolution and Obsidian "
+        "heading rendering; source code, configuration, and data files are wrapped "
+        "in fenced code blocks. Every ingested note carries YAML frontmatter "
+        "recording the original relative path, the detected note type, and an "
+        "ingestion timestamp. The walk admits markdown, source code, configuration, "
+        "and data files by default and rejects binaries, build artifacts, and "
+        "version-control directories; include and exclude patterns are configurable."
+    ))
+    s.append(para(
+        "Type detection is driven by filename and path conventions rather than "
+        "content inspection. <font name='Courier'>README</font> and "
+        "<font name='Courier'>CHANGELOG</font> files are classified as "
+        "documentation; files under <font name='Courier'>decisions/</font> or "
+        "<font name='Courier'>adr/</font> as decisions; files under "
+        "<font name='Courier'>patterns/</font> as patterns; source extensions "
+        "(<font name='Courier'>*.py</font>, <font name='Courier'>*.js</font>, "
+        "<font name='Courier'>*.ts</font>, <font name='Courier'>*.go</font>, and "
+        "their analogues) as code; configuration extensions "
+        "(<font name='Courier'>*.yaml</font>, <font name='Courier'>*.toml</font>, "
+        "<font name='Courier'>*.json</font>) as config. The detected type is "
+        "persisted to frontmatter and consumed downstream by the metadata-boost "
+        "system of &sect;4.2: an ingested decision with accepted status earns a "
+        "higher retrieval score than an ingested generic note. Ingestion "
+        "additionally writes one project note per top-level subdirectory under "
+        "<font name='Courier'>vault/001-projects/</font>, providing each project "
+        "with a stable anchor that other notes can reference by wikilink."
+    ))
+    s.append(para(
+        "Following ingestion, <font name='Courier'>cma index</font> executes the "
+        "<i>training phase</i>. The terminology follows machine-learning convention "
+        "but is technically inaccurate: CMA performs no gradient updates and does "
+        "not fine-tune the embedding model. The training phase is pure indexing - "
+        "tokenizing every note to build the BM25L corpus, computing one "
+        "sentence-transformers forward pass per note to populate the embedding "
+        "matrix, constructing the NetworkX graph from wikilinks and folder "
+        "structure, and serializing the four resulting artifacts to "
+        "<font name='Courier'>cma/cache/</font>. Indexing throughput is "
+        "approximately 100-200 notes per second on commodity CPU (&sect;9.3); for "
+        "a typical host project of one to two thousand files, the full training "
+        "pass completes in under a minute. On return from "
+        "<font name='Courier'>cma add</font>, the vault contains the host "
+        "project's documentation, code, decisions, and patterns as queryable "
+        "memory, and the indexes are ready to serve retrieval on the first session."
+    ))
+
+    s.append(Paragraph("6.3&nbsp;&nbsp;Derived state and operational logs", H2))
     s.append(para(
         "<font name='Courier'>cma/cache/</font> contains the BM25 pickle, the embedding "
         "matrix as a NumPy <font name='Courier'>.npy</font> file with associated "
@@ -989,7 +1040,7 @@ def build_story() -> list:
         "trails and policy-gated write proposals respectively."
     ))
 
-    s.append(Paragraph("6.3&nbsp;&nbsp;Robust parsing", H2))
+    s.append(Paragraph("6.4&nbsp;&nbsp;Robust parsing", H2))
     s.append(para(
         "Vault loading (<font name='Courier'>parse_vault</font>) is best-effort: any "
         "individual note with malformed YAML frontmatter is degraded to an "
@@ -1003,7 +1054,7 @@ def build_story() -> list:
         "notes."
     ))
 
-    s.append(Paragraph("6.4&nbsp;&nbsp;Portability", H2))
+    s.append(Paragraph("6.5&nbsp;&nbsp;Portability", H2))
     s.append(para(
         "Because the vault is plain markdown with YAML frontmatter and wikilinks, it "
         "is portable across machines (a directory copy), version-controllable with "
