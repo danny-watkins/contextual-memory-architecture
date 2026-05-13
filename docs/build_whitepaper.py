@@ -637,7 +637,8 @@ def build_story() -> list:
         "practice is bounded by the graph density and visited-set deduplication. For "
         "vaults below approximately 100K notes on commodity hardware, the entire "
         "pipeline executes in under one second per query without approximate-nearest-"
-        "neighbor structures. Section 10 provides empirical scaling characteristics."
+        "neighbor structures. Section 9.3 reports the empirical footprint and warm-"
+        "process latency measured on synthetic vaults at 1K and 10K notes."
     ))
 
     # ---------- 5. memory formation ----------
@@ -1182,27 +1183,49 @@ def build_story() -> list:
         "matching the old note by query."
     ))
 
-    s.append(Paragraph("9.3&nbsp;&nbsp;Scaling characteristics", H2))
+    s.append(Paragraph("9.3&nbsp;&nbsp;Footprint and scaling", H2))
     s.append(para(
-        "Table 2 reports per-vault size projections on commodity hardware "
-        "(MiniLM-L6-v2 embeddings, 384 dimensions, single-CPU NumPy matmul, no "
-        "ANN structures)."
+        "Table 2 reports measured footprint and warm-process retrieval latency on "
+        "commodity hardware (single-CPU NumPy, no GPU, no ANN structures) using the "
+        "MiniLM-L6-v2 embedding model (384 dimensions, float32). The 1K and 10K rows "
+        "are measured directly via <font name='Courier'>docs/bench_scaling.py</font> "
+        "on synthetic vaults shaped to match real-world structure (mixed decision/"
+        "pattern/session/postmortem notes, 2-5 wikilinks per note, 3-7 paragraphs). "
+        "The 100K row is a linear extrapolation from the 10K measurement, validated "
+        "by the analytic <i>O(N)</i> cost of NumPy cosine similarity over normalized "
+        "embeddings. The 1M row marks the threshold at which brute-force search is no "
+        "longer practical."
     ))
     s.extend(make_table(
-        ["Vault size", "Markdown", "Embeddings", "RAM", "Query latency"],
+        ["Vault size", "Markdown", "Embeddings", "Process RAM", "Warm retrieve", "Source"],
         [
-            ["1K notes",   "~10 MB",  "~1.5 MB",   "~50 MB",   "&lt;50 ms"],
-            ["10K notes",  "~100 MB", "~15 MB",    "~250 MB",  "&lt;100 ms"],
-            ["100K notes", "~1 GB",   "~150 MB",   "~1.5 GB",  "~500 ms"],
-            ["1M notes",   "~10 GB",  "~1.5 GB",   "~10+ GB",  "seconds; needs ANN"],
+            ["1K notes",   "~4 MB",   "1.5 MB",    "~750 MB",  "~40 ms",         "measured"],
+            ["10K notes",  "~37 MB",  "15 MB",     "~1.2 GB",  "~170 ms",        "measured"],
+            ["100K notes", "~370 MB", "~150 MB",   "~2 GB",    "~1.7 s",         "projected"],
+            ["1M notes",   "~3.7 GB", "~1.5 GB",   "~10+ GB",  "needs ANN",      "projected"],
         ],
-        col_widths=[1.0 * inch, 0.95 * inch, 1.05 * inch, 0.95 * inch, 1.5 * inch],
-        caption="Table 2. Projected per-vault footprint and retrieval latency on "
-                "commodity hardware. The reference Retriever uses a flat NumPy matrix "
-                "for cosine similarity; beyond ~100K notes, an approximate-nearest-"
-                "neighbor structure (FAISS, hnswlib) becomes preferable. Beyond "
-                "~500K notes, sharding by domain or archiving cold notes is the "
-                "preferred response.",
+        col_widths=[0.85 * inch, 0.85 * inch, 0.9 * inch, 0.9 * inch, 1.05 * inch, 0.85 * inch],
+        caption="Table 2. Per-vault footprint and warm-process retrieval latency. "
+                "Process RAM reports the full Python process RSS, which includes the "
+                "~500 MB resident sentence-transformers model. Warm retrieve is the "
+                "mean of six in-process retrievals after the model is loaded, which "
+                "matches what the MCP server experiences during a live session. "
+                "Subprocess invocations (<font name='Courier'>cma retrieve</font> from "
+                "the shell) additionally pay a ~10-15 s model-load cost on every call. "
+                "Beyond ~100K notes, swap the flat NumPy cosine for an approximate-"
+                "nearest-neighbor structure (FAISS, hnswlib); beyond ~500K, sharding "
+                "by domain or archiving cold notes is the preferred response.",
+    ))
+    s.append(para(
+        "Three observations are worth flagging. First, the embedding model dominates "
+        "RAM at small vault sizes: at 1K notes the model accounts for roughly "
+        "700 MB of the 750 MB total RSS, and the marginal cost of additional notes "
+        "is small until the vault grows past ~50K. Second, retrieve latency scales "
+        "linearly with vault size because the dominant cost is a single matrix "
+        "multiplication of the query vector against the embedding matrix; BLAS-"
+        "backed NumPy runs this at ~10 GFLOPS on commodity CPUs. Third, index time "
+        "is a one-time cost dominated by the embedding pass (~100-200 notes per "
+        "second on CPU); re-indexing is required only when the vault changes."
     ))
 
     # ---------- 10. ADRs ----------
