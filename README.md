@@ -56,6 +56,29 @@ Then open these in parallel as you work:
 - The memory log dashboard at `cma/memory_log/dashboard.html` — auto-refreshing every 5 seconds, every search/retrieve/record event with clickable artifact links
 - The Obsidian graph view on `cma/vault/` — see the memory structure visually; new Context Specs appear as red nodes
 
+## Training the knowledge graph
+
+When `cma add` runs, it ingests your project files into the vault and then trains the knowledge graph. The training step is what makes retrieval work — without it, the vault is just markdown files with no searchable structure.
+
+"Training" here is conventional ML terminology but technically misleading: **CMA does not fine-tune any model or update any weights**. The training phase is pure indexing — three lookup structures built from the markdown vault:
+
+- **BM25 corpus** — every note tokenized, IDF tables computed for lexical search
+- **Embedding matrix** — one sentence-transformers forward pass per note (no gradients), stacked into an N × 384 matrix for semantic search
+- **NetworkX graph** — nodes and edges constructed from `[[wikilinks]]` and folder structure for traversal
+
+All four artifacts (BM25 pickle, `.npy` embedding matrix, doc/meta JSON, graph manifest) land in `cma/cache/` and are fully regenerable from the vault.
+
+**Re-training after vault changes:**
+
+```bash
+cma index           # rebuild BM25 + embeddings + graph from current vault state
+cma index --no-embeddings   # skip the embedding pass (lexical-only)
+```
+
+Indexing throughput is ~100-200 notes per second on commodity CPU. A typical host project of one to two thousand files completes the full training pass in under a minute. Re-indexing is only required when the vault changes; routine reads (retrieve, search) hit the cache directly.
+
+**Adding your own notes:** drop markdown files directly into the appropriate folder (`vault/003-decisions/`, `vault/004-patterns/`, etc.), then run `cma index` to refresh the indexes. The Recorder also writes structured notes automatically via the confidence-gated policy during normal agent work — those don't require manual re-indexing because the Recorder updates the cache in-process.
+
 ## How auto-firing works
 
 CMA registers two hooks with Claude Code (project-scope `.claude/settings.json`):
