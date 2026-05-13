@@ -720,18 +720,19 @@ def slide_scaling(c, n, total) -> None:
     page_chrome(c, n, total)
     draw_text(c, "Designed for single-CPU scale.", MARGIN_X, 6.5 * inch,
               font="Helvetica-Bold", size=44, color=INK)
-    draw_text(c, "Projected footprint and latency on commodity hardware (MiniLM-L6-v2 384d).",
+    draw_text(c, "Footprint and warm-process latency on commodity hardware (MiniLM-L6-v2 384d).",
               MARGIN_X, 6.5 * inch - 38, font="Helvetica", size=15, color=DIM)
-    # Table
-    headers = ["Vault size", "Markdown", "Embeddings", "RAM",     "Projected latency"]
+    # Table -- 1K and 10K rows are measured via docs/bench_scaling.py;
+    # 100K is linear extrapolation from the 10K measurement; 1M needs ANN.
+    headers = ["Vault size", "Markdown", "Embeddings", "Process RAM", "Warm retrieve", "Source"]
     rows = [
-        ["1K notes",     "~10 MB",    "~1.5 MB",    "~50 MB",  "<50 ms"],
-        ["10K notes",    "~100 MB",   "~15 MB",     "~250 MB", "<100 ms"],
-        ["100K notes",   "~1 GB",     "~150 MB",    "~1.5 GB", "~500 ms"],
-        ["1M notes",     "~10 GB",    "~1.5 GB",    "~10+ GB", "needs ANN"],
+        ["1K notes",     "~4 MB",     "1.5 MB",     "~750 MB",   "~40 ms",    "measured"],
+        ["10K notes",    "~37 MB",    "15 MB",      "~1.2 GB",   "~170 ms",   "measured"],
+        ["100K notes",   "~370 MB",   "~150 MB",    "~2 GB",     "~1.7 s",    "projected"],
+        ["1M notes",     "~3.7 GB",   "~1.5 GB",    "~10+ GB",   "needs ANN", "projected"],
     ]
-    col_x = [MARGIN_X, MARGIN_X + 2.0 * inch, MARGIN_X + 4.2 * inch,
-             MARGIN_X + 6.4 * inch, MARGIN_X + 8.4 * inch]
+    col_x = [MARGIN_X, MARGIN_X + 1.6 * inch, MARGIN_X + 3.4 * inch,
+             MARGIN_X + 5.2 * inch, MARGIN_X + 7.4 * inch, MARGIN_X + 9.2 * inch]
     y = 5.3 * inch
     # Header
     c.setStrokeColor(INK)
@@ -756,9 +757,9 @@ def slide_scaling(c, n, total) -> None:
     c.setStrokeColor(RULE)
     c.setLineWidth(0.5)
     c.line(MARGIN_X, 1.7 * inch, PAGE[0] - MARGIN_X, 1.7 * inch)
-    draw_text(c, "Projections from algorithmic complexity. Reference implementation validated on small demo vaults.",
+    draw_text(c, "1K and 10K rows measured via docs/bench_scaling.py.  100K row extrapolated linearly from the 10K measurement.",
               MARGIN_X, 1.55 * inch, font="Helvetica-Oblique", size=12, color=DIM)
-    draw_text(c, "Beyond ~100K, swap to ANN structures (FAISS, hnswlib).  Beyond ~500K, shard by domain.",
+    draw_text(c, "Process RAM includes the ~500 MB resident sentence-transformers model.  Beyond ~100K, swap to FAISS/hnswlib for embedding search.",
               MARGIN_X, 1.25 * inch, font="Helvetica-Oblique", size=12, color=DIM)
 
 
