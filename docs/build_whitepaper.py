@@ -276,7 +276,7 @@ def build_story() -> list:
         "can carry its own vault. We describe the architecture, the retrieval and "
         "write algorithms, the evaluation harness, and the operational tooling for "
         "memory health and lifecycle curation. We provide a reference implementation "
-        "in Python with 150 tests, a Model Context Protocol server exposing ten "
+        "in Python with 190 tests, a Model Context Protocol server exposing ten "
         "tools for any compatible agent, and a CLI. We discuss the architectural "
         "trajectory toward fractal composition of per-agent vaults into network-level "
         "memory graphs.",
@@ -327,7 +327,7 @@ def build_story() -> list:
         "(3) a confidence-gated memory write policy that distinguishes always-write, "
         "draft, propose, and skip outcomes; (4) operational tooling for memory health "
         "observability and lifecycle curation; and (5) an open-source reference "
-        "implementation with 150 tests, a Model Context Protocol server, and a CLI."
+        "implementation with 190 tests, a Model Context Protocol server, and a CLI."
     ))
     s.append(Paragraph("1.4&nbsp;&nbsp;Lightweight and fractal", H2))
     s.append(para(
@@ -524,19 +524,23 @@ def build_story() -> list:
         "low-confidence records penalize."
     ))
     s.extend(make_table(
-        ["Condition",                                "Multiplicative boost"],
+        ["Condition",                                "Boost multiplier"],
         [
-            ["type = decision &amp; status = accepted",         "+0.10"],
-            ["type = decision &amp; status = superseded",       "&minus;0.50"],
-            ["type = decision &amp; status = rejected",         "&minus;0.30"],
-            ["status = archived",                                "&minus;0.20"],
-            ["human_verified = true",                            "+0.10"],
-            ["confidence &ge; 0.85",                             "+0.08"],
-            ["confidence &lt; 0.30",                             "&minus;0.10"],
+            ["type = decision &amp; status = accepted",         "&times; 1.10"],
+            ["type = decision &amp; status = superseded",       "&times; 0.50"],
+            ["type = decision &amp; status = rejected",         "&times; 0.70"],
+            ["status = archived",                                "&times; 0.80"],
+            ["human_verified = true",                            "&times; 1.10"],
+            ["confidence &ge; 0.85",                             "&times; 1.08"],
+            ["confidence &lt; 0.30",                             "&times; 0.90"],
         ],
         col_widths=[3.5 * inch, 1.6 * inch],
         caption="Table 1. Metadata-derived multiplicative boosts applied to "
-                "hybrid node scores. Boosts compose; the final boost is clamped at 0.",
+                "hybrid node scores. The boost starts at 1.0 and each matching "
+                "condition adds or subtracts the listed delta (e.g., accepted "
+                "contributes +0.10 for a final multiplier of 1.10); multiple "
+                "conditions compose additively, and the final multiplier is "
+                "clamped at 0.",
     ))
 
     s.append(Paragraph("4.3&nbsp;&nbsp;Beam-pruned graph traversal", H2))
@@ -1054,7 +1058,9 @@ def build_story() -> list:
         "bypass the agent's autonomy and couple the integration to a specific runtime."
     ))
     s.extend(figure_box([
-        "  pip install contextual-memory-architecture[mcp]",
+        "  git clone https://github.com/danny-watkins/contextual-memory-architecture",
+        "  cd contextual-memory-architecture",
+        "  pip install -e \".[all]\"",
         "  cd <agent-project>",
         "  cma add",
         "    -> scaffolds ./cma/ (vault, config, node folders, cache)",
@@ -1155,7 +1161,7 @@ def build_story() -> list:
     ))
     s.append(para(
         "Each <font name='Courier'>retrieve()</font> call appends a JSON line to "
-        "<font name='Courier'>.cma/state/retrieval_log.jsonl</font> with timestamp, "
+        "<font name='Courier'>cma/memory_log/activity.jsonl</font> with timestamp, "
         "query, fragment count, token estimate, and the source note titles. This log "
         "is the source-of-truth for cold-note detection and for the most-/never-"
         "retrieved metrics."
@@ -1280,10 +1286,10 @@ def build_story() -> list:
         "Memory must survive index corruption, version upgrades, and tool changes. "
         "Markdown with YAML frontmatter and wikilinks is the spec. Embeddings, BM25 "
         "pickles, graph JSON, and retrieval logs all live under "
-        "<font name='Courier'>.cma/</font> and can be wiped + rebuilt by "
+        "<font name='Courier'>cma/cache/</font> and can be wiped + rebuilt by "
         "<font name='Courier'>cma index</font>. The Recorder is architecturally "
-        "forbidden from writing to <font name='Courier'>.cma/</font>. This invariant "
-        "is the basis of our portability and durability guarantees."
+        "forbidden from writing to <font name='Courier'>cma/cache/</font>. This "
+        "invariant is the basis of our portability and durability guarantees."
     ))
 
     s.append(Paragraph("10.5&nbsp;&nbsp;Per-agent topology", H2))
@@ -1362,8 +1368,8 @@ def build_story() -> list:
     s.append(hrule())
     s.append(code(
         "# cma.config.yaml\n"
-        "vault_path: ./vault                # canonical memory location\n"
-        "index_path: ./.cma                  # derived state location\n"
+        "vault_path: ./cma/vault            # canonical memory location\n"
+        "index_path: ./cma/cache            # derived state location\n"
         "embedding_provider: sentence-transformers\n"
         "                                    # options: sentence-transformers | openai | none\n"
         "embedding_model: all-MiniLM-L6-v2\n"
