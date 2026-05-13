@@ -208,7 +208,10 @@ def figure_box(content_lines: list[str], caption: str) -> list:
 def make_table(headers: list[str], rows: list[list[str]],
                col_widths: list[float] | None = None,
                caption: str | None = None) -> list:
-    data = [headers] + rows
+    import html
+    def decode(cell):
+        return html.unescape(cell) if isinstance(cell, str) else cell
+    data = [[decode(c) for c in headers]] + [[decode(c) for c in row] for row in rows]
     t = Table(data, hAlign="LEFT", colWidths=col_widths)
     t.setStyle(
         TableStyle(
@@ -492,9 +495,13 @@ def build_story() -> list:
     s.append(para(
         "When an embedder is configured, the semantic score is the cosine similarity "
         "between the L2-normalized query embedding and the L2-normalized note "
-        "embedding. Both lexical and semantic scores are normalized to [0, 1] per "
-        "query (max-normalization on the lexical side, native cosine on the semantic "
-        "side). The hybrid score combines them linearly:"
+        "embedding. L2 normalization divides each vector by its Euclidean length "
+        "<i>&radic;(v<sub>1</sub><sup>2</sup> + ... + v<sub>n</sub><sup>2</sup>)</i> "
+        "so it sits on the unit sphere; cosine similarity between two unit-length "
+        "vectors is then their plain dot product, removing any magnitude bias from "
+        "longer notes. Both lexical and semantic scores are normalized to [0, 1] "
+        "per query (max-normalization on the lexical side, native cosine on the "
+        "semantic side). The hybrid score combines them linearly:"
     ))
     s.append(Paragraph(
         "node_score = &alpha; &middot; sem(n, q) + (1 &minus; &alpha;) &middot; lex(n, q)",
