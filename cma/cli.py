@@ -506,7 +506,13 @@ def retrieve(
 
     if json_output:
         out = spec.model_dump_json(indent=2)
-        console.print(out)
+        # rich.Console soft-wraps long lines, which would insert newlines inside
+        # JSON string fields and corrupt the output. Plain `print` would also
+        # fail on Windows when fragments contain non-cp1252 chars (e.g. unicode
+        # arrows). Write UTF-8 bytes straight to stdout to dodge both.
+        sys.stdout.buffer.write(out.encode("utf-8"))
+        sys.stdout.buffer.write(b"\n")
+        sys.stdout.flush()
     else:
         md = render_markdown(spec)
         console.print(Markdown(md))
@@ -521,19 +527,22 @@ def retrieve(
         console.print(f"[dim]Saved context spec -> {save_path}[/dim]")
 
     # Context % gauge: how much of the configured token budget did this spec consume?
-    config = CMAConfig.from_project(project_path)
-    token_budget = 8000  # default - mirrors the ContextRequest schema default
-    used_tokens = sum(len(f.text) for f in spec.fragments) // 4
-    pct = (used_tokens / token_budget * 100) if token_budget else 0.0
-    bar_width = 30
-    filled = min(bar_width, int(pct / 100 * bar_width))
-    bar = "[" + "#" * filled + "-" * (bar_width - filled) + "]"
-    color = "green" if pct < 60 else "yellow" if pct < 90 else "red"
-    console.print(
-        f"\n[bold]Context budget[/bold] {bar} "
-        f"[{color}]{used_tokens:,} / {token_budget:,} tokens ({pct:.0f}%)[/{color}]  "
-        f"| {len(spec.fragments)} fragments from {len({f.source_node for f in spec.fragments})} notes"
-    )
+    # Skip in --json mode so stdout stays parseable. In markdown mode this is a
+    # helpful interactive footer.
+    if not json_output:
+        config = CMAConfig.from_project(project_path)
+        token_budget = 8000  # default - mirrors the ContextRequest schema default
+        used_tokens = sum(len(f.text) for f in spec.fragments) // 4
+        pct = (used_tokens / token_budget * 100) if token_budget else 0.0
+        bar_width = 30
+        filled = min(bar_width, int(pct / 100 * bar_width))
+        bar = "[" + "#" * filled + "-" * (bar_width - filled) + "]"
+        color = "green" if pct < 60 else "yellow" if pct < 90 else "red"
+        console.print(
+            f"\n[bold]Context budget[/bold] {bar} "
+            f"[{color}]{used_tokens:,} / {token_budget:,} tokens ({pct:.0f}%)[/{color}]  "
+            f"| {len(spec.fragments)} fragments from {len({f.source_node for f in spec.fragments})} notes"
+        )
 
 
 # -------- setup helper --------

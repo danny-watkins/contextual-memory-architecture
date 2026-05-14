@@ -320,6 +320,49 @@ We decided to move capital call processing into an async queue for performance.
     assert "Async Capital Call Processing" in result.output
 
 
+def test_retrieve_json_output_is_valid_json(tmp_path: Path, monkeypatch):
+    """Regression: --json output must be machine-parseable. Three regressions
+    this test guards against:
+      1. rich.Console.print soft-wraps long strings, inserting newlines INTO
+         JSON string fields.
+      2. The diagnostic 'Context budget' gauge being written to stdout after
+         the JSON, making the stream un-parseable.
+      3. Unicode characters in fragment text (e.g. →) crashing print() on
+         Windows cp1252.
+    The CLI must emit UTF-8 bytes straight to stdout, with all diagnostics
+    suppressed or routed elsewhere."""
+    import json
+
+    project = tmp_path / "agent"
+    runner.invoke(app, ["init", str(project)])
+    # Long single-paragraph body (forces wrap at narrow widths) + unicode arrow
+    # (forces cp1252 issues on Windows).
+    long_body = (
+        "This is a deliberately long, single-line decision rationale used to "
+        "force terminal soft-wrapping. Arrow: → context hit rate 38% to 78%. " * 6
+    )
+    (project / "cma" / "vault" / "003-decisions" / "Long Wrap Test.md").write_text(
+        f"""---
+type: decision
+title: Long Wrap Test
+status: accepted
+---
+
+{long_body}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("COLUMNS", "80")
+    result = runner.invoke(
+        app,
+        ["retrieve", "long wrap test", "--project", str(project), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    parsed = json.loads(result.stdout)
+    assert "fragments" in parsed
+    assert parsed["query"] == "long wrap test"
+
+
 def test_setup_writes_config_changes(tmp_path: Path):
     import yaml
 
