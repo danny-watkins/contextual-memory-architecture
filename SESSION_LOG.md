@@ -2,7 +2,7 @@
 
 A running log of where we are in the build, so a cold-start return to this project takes minutes instead of hours.
 
-Last updated: 2026-05-12
+Last updated: 2026-05-13
 
 ---
 
@@ -14,7 +14,7 @@ CMA is a working drop-in memory layer that auto-fires on every Claude Code task,
 
 **Reference install:** `examples/email-checker/` — a stand-in agent project we use to exercise CMA end-to-end. Run `cma add` inside that directory after `pip install -e ".[all]"` to see the full loop.
 
-**Status:** all 190 tests pass. Architecture matches the whitepaper. Both the auto-fire hook AND the MCP tools are wired and producing real Context Specs with extracted fragments.
+**Status:** all 202 tests pass. Architecture matches the whitepaper *except* for the two-tier ingestion model added 2026-05-13 (memory vs substrate) — see the 2026-05-13 entry below; whitepaper §6.2 needs an update before the next public release.
 
 ---
 
@@ -120,6 +120,96 @@ If you come back fresh and want to continue:
    - Most demanding: thread #1 (fragment-level hybrid scoring) — a real architectural enhancement
 3. The email-checker demo lives at `examples/email-checker/` -- run `cma add` inside it after the editable pip install
 4. Dashboard will appear at `examples/email-checker/cma/memory_log/dashboard.html` after `cma add` runs
+
+---
+
+## 2026-05-13 — First external dogfood: job-tracker install
+
+Installed CMA into `job-tracker/` (Danny's real job-application automation project, ~221 markdown notes after ingest). The install surfaced three bugs and one architectural mismatch worth fixing before the next external user runs `cma add` on a real project.
+
+### Bugs fixed
+
+**`cma retrieve --json` emitted corrupt JSON** (commit `4e8c215`). Three bugs in one CLI path:
+- `rich.Console.print` soft-wrapped the dumped JSON, inserting `\n` inside string fields. Switched to `sys.stdout.buffer.write(out.encode("utf-8"))` so wrapping is impossible.
+- The "Context budget" gauge printed to stdout *after* the JSON, breaking any `json.loads` on the captured stream. Now suppressed in `--json` mode.
+- Plain `print()` crashed on Windows cp1252 when fragments contained unicode (e.g. `→` arrows from Danny's company notes). UTF-8 bytes route bypasses that too.
+- Regression test in `tests/test_cli.py::test_retrieve_json_output_is_valid_json` exercises all three.
+
+### Architectural changes (commit `7b32cf8`)
+
+The dogfood graph view became a hairball — 221 nodes, several mega-hubs with 200+ outbound edges. Root cause: CMA was treating all ingested content as first-class memory citizens. Code, configs, READMEs, JSON shortlists — all got graph nodes and wikilinks.
+
+**Two-tier ingestion (memory vs substrate).** Every ingested note now carries `tier: memory|substrate` frontmatter:
+- Memory tier (decisions, patterns, projects, companies, skills, sessions, postmortems, evals): lands in `020-sources/`, gets graph colors by `type:`, contributes to the visible map.
+- Substrate tier (code, configs, docs, data, changelogs): lands in a new `020-substrate/` folder, dimmed in the default Obsidian view. Still indexed for BM25 + embeddings — retrieval can still walk substrate, the user just doesn't see it cluttering the graph.
+
+**Fan-out caps on auto-generated nodes.** `context_spec` and project notes were unbounded wikilink emitters. Now:
+- Context specs: max 8 source wikilinks + 12 relationship-map wikilinks. Overflow renders as plain titles in body prose.
+- Project notes: max 12 wikilinks per detected type. Same overflow rule.
+- Constants in `cma/retriever/spec_builder.py` and `cma/ingest.py`.
+
+**Default Obsidian colors switched from retrieve-count heatmap to `type:`-keyed.** The heatmap needed months of retrieval data to differentiate anything; type is available at ingest. New palette is in `cma/_bundle/obsidian/graph.json`. Heatmap stays as a future fallback.
+
+**Dashboard groups by calendar date, not process session id.** `_session_id()` is per-process, so every `cma index` / `cma retrieve` / `cma add` invocation got its own "session" in the dashboard — Danny's first dogfood conversation showed 4 phantom sessions. The JSONL keeps the session_id for forensics; the UI now collapses by `ts[:10]`. New `fmtDayTitle` shows Today / Yesterday / weekday.
+
+### Tests
+
+- `tests/test_spec_builder.py` (new) — wikilink caps regression: sources, relationship map, exclusions all bounded; overflow appears as plain titles.
+- `tests/test_cli.py::test_ingest_folder_routes_mixed_tiers_to_separate_folders` (new) — fixture with a decision + a `.py` file; asserts decision → `020-sources/`, code → `020-substrate/`, both with correct `tier:` frontmatter.
+- Existing ingest tests refactored to use a tier-agnostic `_ingested_notes` helper since they don't care about the split.
+- 191 → 196 passing.
+
+### What the whitepaper needs
+
+§6.2 ("Initial ingestion and the training phase") currently describes a one-tier model — every file becomes a memory node. The text needs:
+- A new subsection on memory vs substrate routing
+- The `tier:` frontmatter field documented in the schema list (§4 or wherever the YAML schema lives)
+- A note that substrate is retrievable but visually filtered by default
+
+The LinkedIn update from 2026-05-12 emphasized the graph view as the headline demo — those screenshots are now misleading (they don't show two-tier coloring). The next LinkedIn post should re-shoot with a fresh `cma add` on a real project to show the new defaults.
+
+### What the dogfood project (job-tracker) needs
+
+The `core/retrieve_context.py` in `job-tracker/` got a 4th hop: CMA Retriever via the Python API (`Retriever.from_project`), called from inside the existing structured-stats retrieval. Bumped `MAX_CONTEXT_CHARS` from 2000 → 2600 to fit the new block. Not in this repo; recorded here so the next CMA installer knows the integration pattern.
+
+---
+
+## Open threads (added 2026-05-13)
+
+9. **Existing vaults don't have `tier:` frontmatter.** ~~Need a `cma migrate-tier` command.~~ Resolved later 2026-05-13 — see the migrate-tier note below.
+
+10. **Whitepaper §6.2 is now stale.** Re-build `docs/CMA_Whitepaper_v0.5.pdf` after the two-tier subsection lands. Probably v0.6.
+
+11. **`cma retrieve` CLI doesn't call `log_activity`.** Noticed while testing the dashboard fix — CLI retrievals are invisible in the memory log because only ingest and one other path call into activity logging. Worth wiring up so the dashboard reflects all retrieval activity, not just hook-fired ones.
+
+12. **Two-tier filter in `.obsidian/graph.json` is colors-only, not search.** Substrate gets dimmed but still shows. A more aggressive default would set `"search": "-[\"tier\":\"substrate\"]"` so substrate is hidden by default and the user clicks to reveal. Held off to be less surprising on first install. Worth A/B-ing against new users.
+
+---
+
+## 2026-05-13 (later) — `cma migrate-tier` lands
+
+Closes thread #9. New command for users with pre-two-tier vaults:
+
+```
+cma migrate-tier [--project PATH] [--move-files] [--dry-run]
+```
+
+What it does:
+- Walks the vault, reads each `.md`, infers `tier:` from existing `type:` via `_classify_tier()` (the same function the ingest pipeline uses).
+- Backfills `tier: memory|substrate` frontmatter on notes that don't already have it. Notes that already declared a tier are left alone.
+- With `--move-files`, additionally relocates substrate notes from `020-sources/<project>/` to `020-substrate/<project>/` so the folder layout matches the frontmatter convention.
+- `--dry-run` previews counts + tier breakdown without writing.
+- Skips `011-archive/` so previously-archived notes stay parked.
+
+Implementation: `cma/lifecycle/migrate_tier.py`, exposed via `cma/lifecycle/__init__.py`. CLI added to `cma/cli.py` as `migrate-tier` (kebab-case command, `migrate_tier_cmd` Python name to avoid shadowing the module).
+
+Tests in `tests/test_migrate_tier.py` cover backfill, dry-run safety, `--move-files` relocation, and CLI surface. 202/202 passing.
+
+Dogfood: ran against the real job-tracker vault. Result was 36 memory + 212 substrate out of 248 notes — matches the audit numbers from earlier today (152 docs + 39 code + 21 configs were the substrate suspects, and that's exactly what came out).
+
+### Whitepaper implication
+
+§6.2 (now slated for v0.6) should mention the migration command as the upgrade path for users who installed under v0.5 — otherwise their graph view stays a hairball after the upstream change.
 
 ---
 

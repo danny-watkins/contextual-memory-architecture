@@ -11,11 +11,17 @@ from cma.lifecycle.archive import (
     archive_cold_notes,
     archive_note,
 )
+from cma.lifecycle.migrate_tier import (
+    MigrateTierResult,
+    migrate_vault_tiers,
+)
 from cma.lifecycle.supersede import supersede_decision
 
 __all__ = [
     "ArchiveResult",
+    "MigrateTierResult",
     "archive_cold_notes",
     "archive_note",
+    "migrate_vault_tiers",
     "supersede_decision",
 ]

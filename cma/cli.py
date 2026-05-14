@@ -21,7 +21,7 @@ from cma.activity import log_activity, read_events, render_dashboard_html
 from cma.config import CMAConfig
 from cma.health import health_report
 from cma.ingest import DEFAULT_SOURCE_EXTENSIONS, ingest_sources
-from cma.lifecycle import archive_cold_notes, supersede_decision
+from cma.lifecycle import archive_cold_notes, migrate_vault_tiers, supersede_decision
 from cma.recorder import Recorder
 from cma.retriever import EmbedderUnavailable, Retriever, get_embedder, render_markdown
 from cma.retriever.embeddings import EmbeddingIndex
@@ -979,6 +979,58 @@ def supersede(
         console.print(f"[yellow]DRY RUN[/yellow]: would supersede [bold]{old_title}[/bold] by [bold]{by}[/bold]")
     else:
         console.print(f"[green]Superseded[/green] [bold]{old_title}[/bold] -> [bold]{by}[/bold]\n[dim]Updated: {path}[/dim]")
+
+
+@app.command("migrate-tier")
+def migrate_tier_cmd(
+    project_path: Path = typer.Option(Path("."), "--project", "-p"),
+    move_files: bool = typer.Option(
+        False,
+        "--move-files",
+        help="Also relocate substrate notes from 020-sources/ to 020-substrate/.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without writing."),
+) -> None:
+    """Backfill `tier:` frontmatter on existing notes (memory vs substrate).
+
+    Use after upgrading to a CMA version with two-tier ingestion when your
+    vault was created by an older `cma add`. Default mode only edits
+    frontmatter (safe). Pass `--move-files` to also reorganize the folder
+    layout so 020-sources/ holds memory and 020-substrate/ holds substrate.
+    Reindex afterwards: `cma index`.
+    """
+    project_path = Path(project_path).resolve()
+    if not (project_path / "cma/config.yaml").exists():
+        console.print(f"[red]No cma/config.yaml at {project_path}.[/red]")
+        raise typer.Exit(code=1)
+
+    config = CMAConfig.from_project(project_path).resolve_paths(project_path)
+    vault_path = Path(config.vault_path)
+
+    result = migrate_vault_tiers(
+        vault_path, move_files=move_files, dry_run=dry_run
+    )
+
+    summary = Table(title="Migrate Tier Result", show_header=False, box=None)
+    summary.add_row("Mode", "DRY RUN" if dry_run else "live")
+    summary.add_row("Backfilled", str(len(result.backfilled)))
+    summary.add_row("Moved", str(len(result.moved)))
+    summary.add_row("Already tagged", str(len(result.already_tagged)))
+    summary.add_row("Skipped", str(len(result.skipped)))
+    console.print(summary)
+
+    if result.backfilled:
+        tier_counts: dict[str, int] = {}
+        for _path, tier in result.backfilled:
+            tier_counts[tier] = tier_counts.get(tier, 0) + 1
+        breakdown = ", ".join(f"{t}={n}" for t, n in sorted(tier_counts.items()))
+        console.print(f"[dim]Tier breakdown: {breakdown}[/dim]")
+
+    if not dry_run and (result.backfilled or result.moved):
+        console.print(
+            "\n[bold]Next:[/bold] run [cyan]cma index[/cyan] to rebuild the BM25 / "
+            "embedding / graph caches against the updated vault."
+        )
 
 
 # -------- evals --------
