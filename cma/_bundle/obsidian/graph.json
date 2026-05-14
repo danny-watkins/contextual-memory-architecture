@@ -8,123 +8,106 @@
   "collapse-color-groups": false,
   "colorGroups": [
     {
+      "_comment": "Transient flash on the node CMA is currently retrieving (demo mode).",
       "query": "[\"cma_active\":true]",
-      "color": {
-        "a": 1,
-        "rgb": 16766208
-      }
+      "color": { "a": 1, "rgb": 16766208 }
     },
     {
+      "_comment": "Archived notes (status: archived). Heavily dimmed so they recede.",
+      "query": "[\"status\":\"archived\"]",
+      "color": { "a": 1, "rgb": 3158064 }
+    },
+    {
+      "_comment": "Substrate tier: code, configs, ingested docs. Backgrounded, not memory.",
+      "query": "[\"tier\":\"substrate\"]",
+      "color": { "a": 1, "rgb": 6710886 }
+    },
+    {
+      "_comment": "Context spec (auto-generated retrieval artifact). Bright red.",
       "query": "[\"type\":\"context_spec\"]",
-      "color": {
-        "a": 1,
-        "rgb": 15680580
-      }
+      "color": { "a": 1, "rgb": 15680580 }
     },
     {
-      "query": "[\"retrieve_count\":>=10]",
-      "color": {
-        "a": 1,
-        "rgb": 2278750
-      }
+      "_comment": "Decisions — emerald. The high-signal class.",
+      "query": "[\"type\":\"decision\"]",
+      "color": { "a": 1, "rgb": 1096065 }
     },
     {
-      "query": "[\"retrieve_count\":>=5]",
-      "color": {
-        "a": 1,
-        "rgb": 4906624
-      }
+      "_comment": "Patterns — purple. Recurring observations.",
+      "query": "[\"type\":\"pattern\"]",
+      "color": { "a": 1, "rgb": 9133302 }
     },
     {
-      "query": "[\"retrieve_count\":>=1]",
-      "color": {
-        "a": 1,
-        "rgb": 8843180
-      }
+      "_comment": "Companies — orange.",
+      "query": "[\"type\":\"company\"]",
+      "color": { "a": 1, "rgb": 16096779 }
     },
     {
-      "query": "path:001-projects",
-      "color": {
-        "a": 1,
-        "rgb": 3900150
-      }
+      "_comment": "Skills — gold/amber.",
+      "query": "[\"type\":\"skill\"]",
+      "color": { "a": 1, "rgb": 16347926 }
     },
     {
-      "query": "path:002-sessions",
-      "color": {
-        "a": 1,
-        "rgb": 440020
-      }
+      "_comment": "People — pink.",
+      "query": "[\"type\":\"person\"]",
+      "color": { "a": 1, "rgb": 15485081 }
     },
     {
+      "_comment": "Projects — blue. Top-level domains.",
+      "query": "[\"type\":\"project\"]",
+      "color": { "a": 1, "rgb": 3900150 }
+    },
+    {
+      "_comment": "Sessions — cyan.",
+      "query": "[\"type\":\"session\"]",
+      "color": { "a": 1, "rgb": 440020 }
+    },
+    {
+      "_comment": "Postmortems — teal.",
+      "query": "[\"type\":\"postmortem\"]",
+      "color": { "a": 1, "rgb": 1357990 }
+    },
+    {
+      "_comment": "Evals — sky.",
+      "query": "[\"type\":\"eval\"]",
+      "color": { "a": 1, "rgb": 6514417 }
+    },
+    {
+      "_comment": "Path-based fallbacks for notes without a type: frontmatter.",
       "query": "path:003-decisions",
-      "color": {
-        "a": 1,
-        "rgb": 1096065
-      }
+      "color": { "a": 1, "rgb": 1096065 }
     },
     {
       "query": "path:004-patterns",
-      "color": {
-        "a": 1,
-        "rgb": 9133302
-      }
+      "color": { "a": 1, "rgb": 9133302 }
     },
     {
       "query": "path:005-people",
-      "color": {
-        "a": 1,
-        "rgb": 15485081
-      }
+      "color": { "a": 1, "rgb": 15485081 }
     },
     {
-      "query": "path:006-tools",
-      "color": {
-        "a": 1,
-        "rgb": 16096779
-      }
+      "query": "path:001-projects",
+      "color": { "a": 1, "rgb": 3900150 }
     },
     {
-      "query": "path:007-codebase",
-      "color": {
-        "a": 1,
-        "rgb": 16347926
-      }
-    },
-    {
-      "query": "path:009-evals",
-      "color": {
-        "a": 1,
-        "rgb": 6514417
-      }
-    },
-    {
-      "query": "path:010-daily-log",
-      "color": {
-        "a": 1,
-        "rgb": 1357990
-      }
+      "query": "path:002-sessions",
+      "color": { "a": 1, "rgb": 440020 }
     },
     {
       "query": "path:011-archive",
-      "color": {
-        "a": 1,
-        "rgb": 4674921
-      }
+      "color": { "a": 1, "rgb": 4674921 }
     },
     {
       "query": "path:020-sources",
-      "color": {
-        "a": 1,
-        "rgb": 6583435
-      }
+      "color": { "a": 1, "rgb": 6583435 }
+    },
+    {
+      "query": "path:020-substrate",
+      "color": { "a": 1, "rgb": 6710886 }
     },
     {
       "query": "path:000-inbox",
-      "color": {
-        "a": 1,
-        "rgb": 9741240
-      }
+      "color": { "a": 1, "rgb": 9741240 }
     }
   ],
   "collapse-display": true,

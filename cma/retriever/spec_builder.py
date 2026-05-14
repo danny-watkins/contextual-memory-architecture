@@ -11,6 +11,14 @@ from cma.schemas.context_spec import ContextSpec, Exclusion, Fragment, Relations
 
 _FILENAME_SAFE = re.compile(r"[^A-Za-z0-9_\-]+")
 
+# Caps on how many wikilinks the persisted spec note emits. Without these, a
+# single context_spec becomes a graph mega-hub citing every traversed source
+# (we've seen 236 outbound edges from one spec). Beyond the cap, sources are
+# listed as plain titles in body text so they're searchable but don't add
+# visible graph edges.
+SOURCE_WIKILINK_CAP = 8
+RELATIONSHIP_WIKILINK_CAP = 12
+
 
 def build_context_spec(
     *,
@@ -187,8 +195,14 @@ def render_spec_as_vault_note(spec: ContextSpec) -> str:
     if not sources_in_order:
         lines.append("_No sources retrieved._")
     else:
-        for src in sources_in_order:
+        for src in sources_in_order[:SOURCE_WIKILINK_CAP]:
             lines.append(f"- [[{src}]]")
+        overflow = sources_in_order[SOURCE_WIKILINK_CAP:]
+        if overflow:
+            lines.append("")
+            lines.append(f"_+ {len(overflow)} more (listed without wikilinks to keep the spec from becoming a graph hub):_")
+            for src in overflow:
+                lines.append(f"- {src}")
     lines.append("")
 
     if spec.parameters:
@@ -215,8 +229,14 @@ def render_spec_as_vault_note(spec: ContextSpec) -> str:
 
     if spec.relationship_map:
         lines.append("## Relationship Map")
-        for edge in spec.relationship_map:
+        for edge in spec.relationship_map[:RELATIONSHIP_WIKILINK_CAP]:
             lines.append(f"- [[{edge.source}]] -> [[{edge.target}]] ({edge.edge_type})")
+        overflow = spec.relationship_map[RELATIONSHIP_WIKILINK_CAP:]
+        if overflow:
+            lines.append("")
+            lines.append(f"_+ {len(overflow)} more edges (plain text to avoid graph fan-out):_")
+            for edge in overflow:
+                lines.append(f"- {edge.source} -> {edge.target} ({edge.edge_type})")
         lines.append("")
 
     if spec.open_questions:
@@ -227,8 +247,12 @@ def render_spec_as_vault_note(spec: ContextSpec) -> str:
 
     if spec.exclusions:
         lines.append("## Exclusions")
-        for exc in spec.exclusions:
+        for exc in spec.exclusions[:SOURCE_WIKILINK_CAP]:
             lines.append(f"- [[{exc.node}]]: {exc.reason}")
+        overflow = spec.exclusions[SOURCE_WIKILINK_CAP:]
+        if overflow:
+            for exc in overflow:
+                lines.append(f"- {exc.node}: {exc.reason}")
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"

@@ -7,6 +7,21 @@ from cma.cli import app
 runner = CliRunner()
 
 
+def _ingested_notes(project: Path, project_name: str) -> list[Path]:
+    """Return ingested notes from either tier folder.
+
+    With the two-tier ingest, memory-tier content lands in `020-sources/` and
+    substrate (code/configs/docs) lands in `020-substrate/`. Tests that only
+    care that ingestion happened (not which tier) should use this helper.
+    """
+    notes: list[Path] = []
+    for tier in ("020-sources", "020-substrate"):
+        tier_dir = project / "cma" / "vault" / tier / project_name
+        if tier_dir.exists():
+            notes.extend(tier_dir.glob("*.md"))
+    return notes
+
+
 def test_init_creates_project_structure(tmp_path: Path):
     project = tmp_path / "agent-1"
     result = runner.invoke(app, ["init", str(project)])
@@ -103,21 +118,24 @@ def test_ingest_folder_detects_documentation_and_inlines_markdown(tmp_path: Path
     )
 
     assert result.exit_code == 0, result.output
-    source_notes = list((project / "cma" / "vault" / "020-sources" / "app").glob("*.md"))
+    # Documentation is substrate tier (it describes the code, it isn't memory),
+    # so it lands under 020-substrate/ — searchable but visually filtered out
+    # of the default graph view.
+    source_notes = list((project / "cma" / "vault" / "020-substrate" / "app").glob("*.md"))
     assert len(source_notes) == 1
     text = source_notes[0].read_text(encoding="utf-8")
     assert "type: documentation" in text
+    assert "tier: substrate" in text
     assert "source_project: app" in text
     assert "From [[app]]" in text
     assert "[[Existing Concept]]" in text
-    # Markdown body must NOT be wrapped in a code fence (so wikilinks resolve).
     assert "```md" not in text
     assert "```markdown" not in text
     project_note = project / "cma" / "vault" / "001-projects" / "app.md"
     assert project_note.exists()
     project_text = project_note.read_text(encoding="utf-8")
     assert "type: project" in project_text
-    # Project note groups sources by detected type.
+    assert "tier: memory" in project_text
     assert "### Documentation" in project_text
     assert (project / "cma" / "cache" / "graph" / "nodes.json").exists()
 
@@ -135,12 +153,16 @@ def test_ingest_folder_detects_code_and_uses_fenced_block(tmp_path: Path):
     )
 
     assert result.exit_code == 0, result.output
-    source_notes = list((project / "cma" / "vault" / "020-sources" / "app").glob("*.md"))
+    # Code is substrate tier — routes to 020-substrate/.
+    source_notes = list((project / "cma" / "vault" / "020-substrate" / "app").glob("*.md"))
     assert len(source_notes) == 1
     text = source_notes[0].read_text(encoding="utf-8")
     assert "type: code" in text
+    assert "tier: substrate" in text
     assert "```python" in text
     assert "def hello()" in text
+    # And it must NOT also be in 020-sources/.
+    assert not list((project / "cma" / "vault" / "020-sources").glob("**/*.md"))
 
 
 def test_ingest_folder_detects_decision_in_decisions_dir(tmp_path: Path):
@@ -159,9 +181,48 @@ def test_ingest_folder_detects_decision_in_decisions_dir(tmp_path: Path):
     )
 
     assert result.exit_code == 0, result.output
+    # Decisions are memory tier — stay under 020-sources/.
     source_notes = list((project / "cma" / "vault" / "020-sources" / "app").glob("*.md"))
     assert len(source_notes) == 1
-    assert "type: decision" in source_notes[0].read_text(encoding="utf-8")
+    text = source_notes[0].read_text(encoding="utf-8")
+    assert "type: decision" in text
+    assert "tier: memory" in text
+
+
+def test_ingest_folder_routes_mixed_tiers_to_separate_folders(tmp_path: Path):
+    """Drop a memory-tier note (decision) and a substrate note (code) into the
+    same source tree; assert they end up in different vault folders so the
+    default graph view can filter substrate out."""
+    project = tmp_path / "agent"
+    source = tmp_path / "source"
+    (source / "app" / "decisions").mkdir(parents=True)
+    (source / "app" / "decisions" / "pick-postgres.md").write_text(
+        "# Pick Postgres\n\nNeed transactions; ACID matters here.\n",
+        encoding="utf-8",
+    )
+    (source / "app" / "main.py").write_text(
+        "def hello():\n    return 'world'\n", encoding="utf-8"
+    )
+    runner.invoke(app, ["init", str(project)])
+
+    result = runner.invoke(
+        app,
+        ["ingest-folder", str(source), "--project", str(project), "--extensions", "md,py"],
+    )
+    assert result.exit_code == 0, result.output
+
+    memory_notes = list((project / "cma" / "vault" / "020-sources").glob("**/*.md"))
+    substrate_notes = list((project / "cma" / "vault" / "020-substrate").glob("**/*.md"))
+    memory_titles = {p.stem for p in memory_notes}
+    substrate_titles = {p.stem for p in substrate_notes}
+    assert any("postgres" in t for t in memory_titles), memory_titles
+    assert any("main" in t for t in substrate_titles), substrate_titles
+    # Each note must declare its tier explicitly so downstream tools (graph
+    # filters, retrieval policies) can rely on it.
+    for n in memory_notes:
+        assert "tier: memory" in n.read_text(encoding="utf-8")
+    for n in substrate_notes:
+        assert "tier: substrate" in n.read_text(encoding="utf-8")
 
 
 def test_ingest_folder_skips_files_under_min_chars(tmp_path: Path):
@@ -178,9 +239,9 @@ def test_ingest_folder_skips_files_under_min_chars(tmp_path: Path):
     )
 
     assert result.exit_code == 0, result.output
-    source_notes = list((project / "cma" / "vault" / "020-sources" / "app").glob("*.md"))
-    assert len(source_notes) == 1
-    assert "main" in source_notes[0].name
+    notes = _ingested_notes(project, "app")
+    assert len(notes) == 1
+    assert "main" in notes[0].name
 
 
 def test_ingest_folder_exclude_glob_skips_matching_paths(tmp_path: Path):
@@ -208,7 +269,7 @@ def test_ingest_folder_exclude_glob_skips_matching_paths(tmp_path: Path):
     )
 
     assert result.exit_code == 0, result.output
-    notes = list((project / "cma" / "vault" / "020-sources" / "app").glob("*.md"))
+    notes = _ingested_notes(project, "app")
     assert len(notes) == 1
     assert notes[0].stem == "main"
 
@@ -228,6 +289,7 @@ def test_ingest_folder_dry_run_writes_nothing(tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert "DRY RUN" in result.output
     assert not (project / "cma" / "vault" / "020-sources" / "source").exists()
+    assert not (project / "cma" / "vault" / "020-substrate" / "source").exists()
 
 
 def test_ingest_folder_skips_target_project_when_source_contains_it(tmp_path: Path):
@@ -246,8 +308,10 @@ def test_ingest_folder_skips_target_project_when_source_contains_it(tmp_path: Pa
     )
 
     assert result.exit_code == 0, result.output
-    assert list((project / "cma" / "vault" / "020-sources" / "external").glob("*.md"))
+    # The external README is documentation -> substrate tier.
+    assert _ingested_notes(project, "external"), "external note was not ingested"
     assert not (project / "cma" / "vault" / "020-sources" / "agent").exists()
+    assert not (project / "cma" / "vault" / "020-substrate" / "agent").exists()
 
 
 def test_ingest_folder_filenames_have_single_md_extension(tmp_path: Path):
@@ -264,7 +328,7 @@ def test_ingest_folder_filenames_have_single_md_extension(tmp_path: Path):
 
     runner.invoke(app, ["ingest-folder", str(source), "--project", str(project)])
 
-    notes = list((project / "cma" / "vault" / "020-sources" / "app").glob("*.md"))
+    notes = _ingested_notes(project, "app")
     for n in notes:
         assert not n.name.endswith(".md.md"), f"double extension on {n.name}"
         assert not n.name.endswith(".py.md") or ".py" in n.stem
@@ -291,7 +355,7 @@ def test_ingest_folder_excludes_dot_claude_dir(tmp_path: Path):
     )
 
     assert result.exit_code == 0, result.output
-    notes = list((project / "cma" / "vault" / "020-sources" / "app").glob("*.md"))
+    notes = _ingested_notes(project, "app")
     assert len(notes) == 1
     assert "README" in notes[0].name
 

@@ -53,6 +53,7 @@ VAULT_FOLDERS = [
     "010-daily-log",
     "011-archive",
     "020-sources",
+    "020-substrate",
     "030-concepts",
     "040-technologies",
     "050-hubs",

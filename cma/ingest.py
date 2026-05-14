@@ -110,6 +110,42 @@ CONFIG_EXTENSIONS = {".json", ".yaml", ".yml", ".toml"}
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 DATA_EXTENSIONS = {".txt"}
 
+# Two-tier ingestion: types in MEMORY_TYPES are first-class graph citizens
+# (decisions, patterns, design docs, etc.). Everything else is substrate —
+# searchable via BM25 / embeddings, but visually filtered out of the default
+# graph view so the memory layer stays legible. See docs/design/two-tier.md.
+MEMORY_TYPES = {
+    "decision",
+    "pattern",
+    "postmortem",
+    "person",
+    "company",
+    "skill",
+    "project",
+    "session",
+    "eval",
+    "context_spec",
+}
+SUBSTRATE_TYPES = {
+    "code",
+    "config",
+    "data",
+    "changelog",
+    "documentation",
+    "source",
+}
+
+
+def _classify_tier(detected_type: str) -> str:
+    """Return 'memory' or 'substrate' for a detected type."""
+    if detected_type in MEMORY_TYPES:
+        return "memory"
+    if detected_type in SUBSTRATE_TYPES:
+        return "substrate"
+    # Unknown types default to memory tier — better to over-include than to
+    # silently drop something a user added a custom type for.
+    return "memory"
+
 LANGUAGE_BY_EXTENSION = {
     ".py": "python",
     ".js": "javascript",
@@ -238,6 +274,9 @@ def _readme_summary(source_dir: Path, project_name: str, max_chars: int = 600) -
     return None
 
 
+PROJECT_NOTE_WIKILINK_CAP_PER_TYPE = 12
+
+
 def _render_project_note(
     *,
     project_name: str,
@@ -246,6 +285,7 @@ def _render_project_note(
 ) -> str:
     fm = {
         "type": "project",
+        "tier": "memory",
         "title": project_name,
         "status": "active",
         "created": _now_iso(),
@@ -262,15 +302,24 @@ def _render_project_note(
         "",
         "## Sources",
     ]
-    type_order = ["documentation", "decision", "pattern", "code", "config", "data", "changelog", "source"]
+    type_order = ["decision", "pattern", "documentation", "code", "config", "data", "changelog", "source"]
     for type_name in type_order:
         titles = sources_by_type.get(type_name)
         if not titles:
             continue
         heading = type_name.title() if type_name != "code" else "Code"
         lines.append(f"### {heading}")
-        for title in sorted(set(titles)):
+        unique = sorted(set(titles))
+        # Cap wikilinks per category to keep the project note from becoming a
+        # 200-edge hub. Beyond the cap, list as plain titles.
+        for title in unique[:PROJECT_NOTE_WIKILINK_CAP_PER_TYPE]:
             lines.append(f"- [[{title}]]")
+        overflow = unique[PROJECT_NOTE_WIKILINK_CAP_PER_TYPE:]
+        if overflow:
+            lines.append("")
+            lines.append(f"_+ {len(overflow)} more (listed without wikilinks):_")
+            for title in overflow:
+                lines.append(f"- {title}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -297,8 +346,10 @@ def _render_source_note(
     if detected_type != "source":
         tags.append("source")
 
+    tier = _classify_tier(detected_type)
     fm = {
         "type": detected_type,
+        "tier": tier,
         "title": title,
         "status": default_status,
         "created": _now_iso(),
@@ -440,8 +491,13 @@ def ingest_sources(
             rel_within_project = _relpath_within_project(source_dir, file_path, file_project)
         title = file_path.stem
         detected_type = _detect_type(file_path, rel_within_project)
+        tier = _classify_tier(detected_type)
 
-        target_dir = vault_path / "020-sources" / sanitize_filename(file_project)
+        # Substrate (code, configs, docs) goes to 020-substrate/ so the default
+        # Obsidian graph view can filter it out without losing retrievability.
+        # Memory-tier ingested content stays under 020-sources/.
+        tier_folder = "020-substrate" if tier == "substrate" else "020-sources"
+        target_dir = vault_path / tier_folder / sanitize_filename(file_project)
         target_path = target_dir / _filename_for_relpath(rel_within_project)
         if target_path.exists() and not overwrite:
             result.skipped.append((file_path, "already exists in vault"))

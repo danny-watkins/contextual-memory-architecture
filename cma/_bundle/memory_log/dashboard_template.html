@@ -227,7 +227,7 @@
       <option value="bootstrap">bootstrap</option>
     </select>
     <select id="filter-session">
-      <option value="">all sessions</option>
+      <option value="">all days</option>
     </select>
     <input id="filter-query" type="text" placeholder="search queries / titles / task ids...">
   </div>
@@ -264,14 +264,19 @@ function fmtTimeOnly(iso) {
   return d.toTimeString().slice(0, 8);
 }
 
-function fmtSessionTitle(sessionId) {
-  // Two id formats supported:
-  //   - Claude Code (UUID-ish): "87aee6fc-cba9-4def-8acd-..." -> show first 8 chars
-  //   - CMA process default:    "20260509-183000-pid12345"     -> show date/time
-  const tsMatch = sessionId.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})/);
-  if (tsMatch) return `${tsMatch[1]}-${tsMatch[2]}-${tsMatch[3]} ${tsMatch[4]}:${tsMatch[5]}`;
-  if (sessionId.length > 12) return sessionId.slice(0, 12) + "…";
-  return sessionId;
+function fmtDayTitle(dayKey) {
+  // dayKey is "YYYY-MM-DD". Show "Today" / "Yesterday" / long form so the
+  // most-relevant rows read naturally at a glance.
+  const today = new Date();
+  const todayKey = today.toISOString().slice(0, 10);
+  const yest = new Date(today); yest.setDate(today.getDate() - 1);
+  const yestKey = yest.toISOString().slice(0, 10);
+  if (dayKey === todayKey) return `Today · ${dayKey}`;
+  if (dayKey === yestKey) return `Yesterday · ${dayKey}`;
+  // Add weekday for context on older days.
+  const d = new Date(dayKey + "T12:00:00Z");
+  const wd = d.toLocaleDateString(undefined, { weekday: "short" });
+  return `${wd} · ${dayKey}`;
 }
 
 function escapeHtml(s) {
@@ -331,49 +336,44 @@ function renderEvent(ev) {
     </div>`;
 }
 
-function groupBySession(events) {
+function groupByDay(events) {
+  // Group by calendar date (UTC). Process-level session_ids are kept in the
+  // JSONL for forensics but are noise in the dashboard: every CLI invocation
+  // is its own process, so they fragment a single day of work into many
+  // tiny "sessions". A day is the unit a human actually cares about.
   const groups = new Map();
   for (const ev of events) {
-    const sid = ev.session_id || "unknown";
-    if (!groups.has(sid)) groups.set(sid, []);
-    groups.get(sid).push(ev);
+    const day = (ev.ts || "").slice(0, 10) || "unknown";
+    if (!groups.has(day)) groups.set(day, []);
+    groups.get(day).push(ev);
   }
-  // Sort sessions by the timestamp of their most recent event, newest first.
-  // We can't rely on session_id ordering because Claude Code uses UUID-style IDs
-  // (random) while the CMA process default uses timestamp-style IDs (sortable).
-  // Sorting by recent activity works regardless of the id format.
-  return [...groups.entries()].sort((a, b) => {
-    const lastA = a[1][a[1].length - 1].ts;
-    const lastB = b[1][b[1].length - 1].ts;
-    return lastB.localeCompare(lastA);
-  });
+  // Newest day first; events within a day stay chronological (JSONL is append-only).
+  return [...groups.entries()].sort((a, b) => b[0].localeCompare(a[0]));
 }
 
 function render() {
   document.getElementById("project-name").textContent = payload.project_name;
   const total = events.length;
-  const sessions = groupBySession(events);
+  const days = groupByDay(events);
   const lastTs = events.length ? events[events.length - 1].ts : null;
-  const subtitle = `${total} event${total === 1 ? "" : "s"} · ${sessions.length} session${sessions.length === 1 ? "" : "s"}` +
+  const subtitle = `${total} event${total === 1 ? "" : "s"} · ${days.length} day${days.length === 1 ? "" : "s"}` +
     (lastTs ? ` · last activity ${fmtRelative(lastTs)}` : "");
   document.getElementById("subtitle").textContent = subtitle;
   document.getElementById("updated").textContent = `Generated ${fmtRelative(payload.generated_at)} · auto-refreshes every 5 seconds`;
 
-  // populate session filter
+  // populate day filter
   const sel = document.getElementById("filter-session");
-  // keep first option, replace others
   sel.length = 1;
-  for (const [sid] of sessions) {
+  for (const [day] of days) {
     const opt = document.createElement("option");
-    opt.value = sid;
-    opt.textContent = fmtSessionTitle(sid);
+    opt.value = day;
+    opt.textContent = fmtDayTitle(day);
     sel.appendChild(opt);
   }
 
-  // build session blocks
   const showLowLevel = document.getElementById("show-low-level").checked;
   const filterType = document.getElementById("filter-type").value;
-  const filterSession = document.getElementById("filter-session").value;
+  const filterDay = document.getElementById("filter-session").value;
   const filterQuery = document.getElementById("filter-query").value.trim().toLowerCase();
 
   const container = document.getElementById("sessions");
@@ -384,9 +384,9 @@ function render() {
   }
 
   let html = "";
-  let mostRecentSid = sessions.length ? sessions[0][0] : null;
-  for (const [sid, evs] of sessions) {
-    if (filterSession && sid !== filterSession) continue;
+  const mostRecentDay = days.length ? days[0][0] : null;
+  for (const [day, evs] of days) {
+    if (filterDay && day !== filterDay) continue;
     const visible = evs.filter(ev => {
       if (!showLowLevel && LOW_LEVEL_TYPES.has(ev.type)) return false;
       if (filterType && ev.type !== filterType) return false;
@@ -397,18 +397,18 @@ function render() {
       return true;
     });
     if (visible.length === 0) continue;
-    const isActive = sid === mostRecentSid;
-    const startTs = evs[0].ts;
-    const endTs = evs[evs.length - 1].ts;
-    const durMin = Math.max(1, Math.round((Date.parse(endTs) - Date.parse(startTs)) / 60000));
-    const openClass = sessionStorage.getItem("session-" + sid) === "closed" ? "" : "open";
+    const isActive = day === mostRecentDay;
+    const firstTime = (evs[0].ts || "").slice(11, 16);
+    const lastTime = (evs[evs.length - 1].ts || "").slice(11, 16);
+    const span = firstTime === lastTime ? firstTime : `${firstTime}–${lastTime}`;
+    const openClass = sessionStorage.getItem("day-" + day) === "closed" ? "" : "open";
     const activePill = isActive ? `<span class="session-active-pill">active</span>` : "";
     html += `
-      <div class="session ${openClass}" data-sid="${escapeHtml(sid)}">
-        <div class="session-head" onclick="toggleSession('${escapeHtml(sid)}')">
+      <div class="session ${openClass}" data-sid="${escapeHtml(day)}">
+        <div class="session-head" onclick="toggleSession('${escapeHtml(day)}')">
           <span class="session-caret">▶</span>
-          <div class="session-title">Session ${escapeHtml(fmtSessionTitle(sid))}</div>
-          <span class="session-meta">${visible.length} event${visible.length === 1 ? "" : "s"} · ${durMin} min</span>
+          <div class="session-title">${escapeHtml(fmtDayTitle(day))}</div>
+          <span class="session-meta">${visible.length} event${visible.length === 1 ? "" : "s"} · ${span} UTC</span>
           ${activePill}
         </div>
         <div class="session-body">
@@ -432,11 +432,12 @@ function render() {
   document.getElementById("stats").innerHTML = statsHtml;
 }
 
-function toggleSession(sid) {
-  const el = document.querySelector(`.session[data-sid="${sid}"]`);
+function toggleSession(day) {
+  // Name kept for the inline onclick handlers; semantics are now per-day.
+  const el = document.querySelector(`.session[data-sid="${day}"]`);
   if (!el) return;
   el.classList.toggle("open");
-  sessionStorage.setItem("session-" + sid, el.classList.contains("open") ? "open" : "closed");
+  sessionStorage.setItem("day-" + day, el.classList.contains("open") ? "open" : "closed");
 }
 
 // Restore scroll on load, save on unload
