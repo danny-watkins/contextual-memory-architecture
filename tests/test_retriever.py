@@ -133,3 +133,126 @@ def test_render_markdown_smoke(tmp_path: Path):
     assert "# Context Spec" in md
     assert spec.task_id in md
     assert "Retrieved Fragments" in md
+
+
+def _flywheel_poisoned_vault(tmp_path: Path) -> Path:
+    """Vault that reproduces the Phase 1 failure mode: a canonical memory note
+    competing against context_spec self-references, inbox-prompt noise, and
+    substrate code files that string-match the query."""
+    vault = tmp_path / "vault"
+    (vault / "020-sources" / "companies").mkdir(parents=True)
+    (vault / "008-context-specs").mkdir(parents=True)
+    (vault / "000-inbox" / "prompts" / "2026-05-14").mkdir(parents=True)
+    (vault / "020-sources" / "code").mkdir(parents=True)
+
+    # The canonical answer: a curated memory-tier company note.
+    (vault / "020-sources" / "companies" / "anthropic.md").write_text(
+        """---
+type: documentation
+tier: memory
+title: anthropic
+status: active
+---
+
+# Anthropic
+
+Anthropic builds reliable, interpretable, and steerable AI systems. Applied roles tracked here.
+""",
+        encoding="utf-8",
+    )
+
+    # Context-spec self-reference: stores the exact user query in its body.
+    # Before the fix, this scores ~1.0 on the literal-substring query.
+    (vault / "008-context-specs" / "spec-deadbeef.md").write_text(
+        """---
+type: context_spec
+tier: memory
+title: spec-deadbeef
+status: active
+---
+
+## Task
+- Query: what do you know about Anthropic?
+- Generated: 2026-05-14T00:00:00Z
+""",
+        encoding="utf-8",
+    )
+
+    # Inbox-prompt noise: literal query in title and body.
+    (vault / "000-inbox" / "prompts" / "2026-05-14" / "prompt-001.md").write_text(
+        """---
+type: note
+tier: memory
+title: what do you know about Anthropic?
+status: noise
+---
+
+what do you know about Anthropic?
+""",
+        encoding="utf-8",
+    )
+
+    # Substrate code that mentions Anthropic many times in string literals.
+    (vault / "020-sources" / "code" / "generate_cover_letter.md").write_text(
+        """---
+type: code
+tier: substrate
+title: generate_cover_letter
+status: proposed
+---
+
+```python
+PROMPT_ANTHROPIC = "Anthropic builds AI systems. Anthropic. Anthropic. Anthropic."
+PROMPT_ANTHROPIC_2 = "When writing to Anthropic, mention Anthropic's mission."
+```
+""",
+        encoding="utf-8",
+    )
+    return vault
+
+
+def test_retriever_excludes_context_specs_and_noise_from_seeds(tmp_path: Path):
+    """Regression test for the Phase 1 flywheel-poisoning failure.
+
+    With the fix, a query whose literal text appears verbatim in a context_spec
+    and an inbox-prompt note must still seed on the actual memory note.
+    """
+    vault = _flywheel_poisoned_vault(tmp_path)
+    retriever = _retriever_bm25_only(vault)
+    spec = retriever.retrieve("what do you know about Anthropic?")
+    titles = {f.source_node for f in spec.fragments}
+
+    assert "anthropic" in titles, (
+        f"company note (the canonical answer) must be in fragments; got {titles}"
+    )
+    assert "spec-deadbeef" not in titles, (
+        "context_spec notes self-reference the query and must not seed retrieval"
+    )
+    # The inbox prompt has title equal to the query; ensure it's filtered too.
+    for f in spec.fragments:
+        assert f.source_node != "prompt-001", (
+            "inbox-prompt notes (status=noise) must not appear in fragments"
+        )
+
+
+def test_retriever_memory_note_outranks_substrate_code(tmp_path: Path):
+    """When a memory-tier note and a substrate-tier code file both match a
+    query, the memory note must rank higher (it's the curated answer)."""
+    vault = _flywheel_poisoned_vault(tmp_path)
+    retriever = _retriever_bm25_only(vault)
+    spec = retriever.retrieve("Anthropic")
+
+    # Ordering: find positions of the two competing nodes
+    seen = []
+    for f in spec.fragments:
+        if f.source_node not in seen:
+            seen.append(f.source_node)
+
+    if "generate_cover_letter" in seen and "anthropic" in seen:
+        assert seen.index("anthropic") < seen.index("generate_cover_letter"), (
+            f"memory note 'anthropic' should outrank substrate code "
+            f"'generate_cover_letter'; got order {seen}"
+        )
+    else:
+        # The memory note should at minimum be present.
+        assert "anthropic" in seen, f"memory note missing from results; got {seen}"

@@ -342,10 +342,33 @@ Combined boost values:
 
 8 new tests in `test_scoring.py`, including a regression test that mirrors the Phase 1 failure mode: substrate code with *higher* raw lexical (0.50) must lose to memory prose with *lower* raw lexical (0.45) at final scoring. All 212 tests pass.
 
-### Next
+### Bug E + retriever follow-up (commit pending)
 
-- Re-run Phase 1 (Tests #1-#3) on the job-tracker install to confirm `[[anthropic]]`, shortlists, and `outcomes_summary` now appear in top-K. Probably needs a `cma index` first to rebuild graph (no schema change, but defense-in-depth).
-- If Phase 1 passes, proceed to Phase 2 (retrieval quality prompts #4-#6).
+Re-running Phase 1 against the real vault revealed the initial Bug C fix wasn't enough. `metadata_boost` only ran at `_score_candidates` (after seeding) and the score gap between memory prose and substrate density was much wider than the boost could close. Direct BM25 inspection on the live vault showed:
+
+- Top 30 raw hits were **all `context_spec` notes** (perfect 1.0 self-matches because they store the user's query verbatim — the GraphRAG flywheel poisoning itself).
+- After filtering specs, **22 inbox-prompt notes** (`status: noise`) still dominated for the same reason (literal query in body/title).
+- After filtering both, the canonical `[[anthropic]]` memory note sat at raw rank #19 (score 0.098) versus shortlist JSON configs at raw 1.0 — a 10× gap. No realistic per-record boost could overcome that.
+
+Four-part fix (single commit):
+
+1. **Corpus-level filter at Retriever init.** `type: context_spec` and `status: noise` records are kept in `self.records` (so the graph still includes them as nodes for traversal forensics) but excluded from `BM25Index` and `EmbeddingIndex`. This fixes the normalization poisoning — anthropic.md jumps from raw 0.098 (10% of max) to a fair score in a clean corpus.
+2. **`metadata_boost` applied at seed selection.** Previously the boost only ran in `_score_candidates`; the threshold check used raw hybrid scores. Now `_select_seeds` multiplies through `metadata_boost(rec) * title_match_boost(rec, query)` before comparing to threshold.
+3. **`title_match_boost(record, query)` — new scoring helper.** Returns 6.0 when a query token (length ≥ 3, case-folded) appears as a token in the record's title; else 1.0. Calibrated to let memory-tier prose with a matching title beat top-scoring substrate density. Applied at both `_select_seeds` and `_score_candidates`.
+4. **`"noise"` added to `MemoryStatus` / `VALID_STATUSES`.** The parser was silently coercing `status: noise` (used by inbox prompts) to `"active"` because it wasn't in the enum, which broke the new corpus filter until the schema was updated.
+5. **Widened seed-pool fetch.** `_seed_scores` now requests `max(top_k * 5, 50)` raw hits instead of `top_k`, so a record buried at raw rank ~20 can still reach the re-rank stage where boosts elevate it. Without this, the title-match boost would be a no-op for anything outside the top 10.
+
+Live re-test on the real vault:
+
+- **Test #1 ("what do you know about Anthropic?"):** ✅ `[[anthropic]]` is now the **#1** result (was unranked beyond top 30 before all the fixes). Shortlists follow, which is appropriate as supporting evidence.
+- **Tests #2 + #3:** Bug C/E fixes hold (context_specs and noise filtered out of results), but the canonical sources for these queries (`outcomes_summary`, `skills/*` aggregates, shortlists filtered by `fit_score >= 0.8`) don't have matching title tokens *and* don't out-densify cover-letter code on BM25. This is a real limit of lexical-only retrieval. The fix here is the embedding-fragment-scoring pass from Open Thread #1 — bigger change, separate commit.
+
+4 new unit tests for `title_match_boost` + 2 retriever regression tests using a synthetic flywheel-poisoned vault. 218 total tests pass.
+
+### Open after this commit
+
+- **Tests #2 + #3 retrieval quality.** Need embedding-based fragment/seed scoring to handle semantic-paraphrase queries (e.g. "jobs where I scored over 80% fit" doesn't lexically match the field name `fit_score`). Open Thread #1 has been waiting on this; the job-tracker dogfood gives us concrete eval prompts.
+- **Phase 2 (retrieval quality prompts #4-#6).** Defer until the embedding fix lands; otherwise we'll be testing the same lexical limits.
 
 ---
 

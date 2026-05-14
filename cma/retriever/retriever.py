@@ -29,7 +29,12 @@ from datetime import datetime, timezone
 
 from cma.retriever.fragments import deduplicate_fragments, select_fragments
 from cma.retriever.lexical import BM25Index
-from cma.retriever.scoring import final_score, hybrid_node_score, metadata_boost
+from cma.retriever.scoring import (
+    final_score,
+    hybrid_node_score,
+    metadata_boost,
+    title_match_boost,
+)
 from cma.retriever.spec_builder import (
     build_context_spec,
     new_spec_id,
@@ -62,9 +67,22 @@ class Retriever:
         self.embedder = embedder
         self.project_path = Path(project_path).resolve() if project_path else None
         self.vault_path = Path(vault_path).resolve() if vault_path else None
-        self.bm25 = BM25Index(records)
+        # Records eligible for seed ranking. Two classes of note are excluded
+        # from the search index entirely (not just at threshold time) because
+        # they store the user's literal query in their body and would otherwise
+        # dominate BM25 normalization — squashing legitimate hits to near-zero:
+        #   - `type: context_spec` — derived artifacts written by prior
+        #     retrieves (GraphRAG flywheel poisoning).
+        #   - `status: noise` — inbox-captured prompts (whitepaper §5.8).
+        # Both remain in self.records so the graph can still treat them as
+        # nodes (e.g. for traversal from a curated seed that wikilinks to one).
+        seedable = [
+            r for r in records
+            if r.type != "context_spec" and r.status != "noise"
+        ]
+        self.bm25 = BM25Index(seedable)
         self.embedding_index: EmbeddingIndex | None = (
-            EmbeddingIndex.build(records, embedder) if embedder else None
+            EmbeddingIndex.build(seedable, embedder) if embedder else None
         )
 
     @classmethod
@@ -106,8 +124,16 @@ class Retriever:
     # ----- internals -----
 
     def _seed_scores(self, query: str, top_k: int) -> dict[str, tuple[float, float]]:
-        """Return record_id -> (semantic_score, lexical_score) for the union of top results."""
-        lexical = dict(self.bm25.search(query, top_k=top_k))
+        """Return record_id -> (semantic_score, lexical_score) for the union of top results.
+
+        Fetches a wider raw pool than `top_k` (5× or 50, whichever is larger)
+        so that boost/title-match re-ranking inside `_select_seeds` has room
+        to elevate buried-but-relevant records. Without this, a memory-tier
+        note that sits at raw BM25 rank ~20 (because substrate JSON files
+        dominate lexical density) would never reach the re-rank stage.
+        """
+        pool_k = max(top_k * 5, 50)
+        lexical = dict(self.bm25.search(query, top_k=pool_k))
 
         semantic: dict[str, float] = {}
         if self.embedding_index is not None and self.embedder is not None:
@@ -117,7 +143,7 @@ class Retriever:
                 norm = np.linalg.norm(qvec[0])
                 if norm > 0:
                     qvec = qvec / norm
-                semantic = dict(self.embedding_index.search(qvec[0], top_k=top_k))
+                semantic = dict(self.embedding_index.search(qvec[0], top_k=pool_k))
 
         out: dict[str, tuple[float, float]] = {}
         for rid in set(lexical) | set(semantic):
@@ -131,13 +157,33 @@ class Retriever:
 
         Only docs scoring at or above node_threshold qualify as seeds. Weaker
         hits can still be surfaced later via graph traversal from a strong seed.
+
+        Three pre-filters before scoring:
+
+        * `type == "context_spec"`: derived artifacts written by prior retrieves;
+          they store the user's query verbatim and would perfectly self-match
+          on substring queries (GraphRAG-flywheel poisoning). They remain in
+          the corpus for graph traversal but never seed.
+        * `status == "noise"`: inbox-captured prompts (whitepaper §5.8). Same
+          self-match problem — they contain the literal query.
+        * Anything else then goes through the full metadata-boosted score, so
+          substrate-tier source files and raw code/config don't outrank curated
+          memory notes purely on lexical density.
         """
         scored = self._seed_scores(query, top_k=top_k)
         ranked: list[tuple[str, float]] = []
         for rid, (sem, lex) in scored.items():
-            score = hybrid_node_score(sem, lex, alpha)
-            if score >= node_threshold:
-                ranked.append((rid, score))
+            rec = self.records_by_id.get(rid)
+            if rec is None:
+                continue
+            if rec.type == "context_spec":
+                continue
+            if rec.status == "noise":
+                continue
+            hybrid = hybrid_node_score(sem, lex, alpha)
+            boosted = hybrid * metadata_boost(rec) * title_match_boost(rec, query)
+            if boosted >= node_threshold:
+                ranked.append((rid, boosted))
         ranked.sort(key=lambda x: x[1], reverse=True)
         return ranked[:top_k]
 
@@ -168,9 +214,18 @@ class Retriever:
             rec = self.records_by_id.get(cand.node_id)
             if rec is None:
                 continue
+            # Mirror the seed-time filter for traversed nodes: context_spec and
+            # noise prompts may be reached via wikilinks from a real seed, but
+            # they should never appear in the user-visible result set — they
+            # are derived/inbox artifacts, not source content.
+            if rec.type == "context_spec" or rec.status == "noise":
+                continue
             sem = sem_scores.get(cand.node_id, 0.0)
             lex = bm25_scores.get(cand.node_id, 0.0)
             score = final_score(sem, lex, rec, cand.depth, alpha=alpha, depth_decay=depth_decay)
+            # Title-match super-boost: applied here too so traversed nodes whose
+            # titles match the query also surface above generic neighbors.
+            score *= title_match_boost(rec, query)
             results.append((rec, cand.depth, score))
         return results
 

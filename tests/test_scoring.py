@@ -3,6 +3,7 @@ from cma.retriever.scoring import (
     final_score,
     hybrid_node_score,
     metadata_boost,
+    title_match_boost,
 )
 from cma.schemas.memory_record import MemoryRecord
 
@@ -107,6 +108,29 @@ def test_metadata_boost_documentation_in_memory_unchanged():
     that string-matches the query."""
     rec = _rec(type="documentation", tier="memory")
     assert metadata_boost(rec) == 1.0
+
+
+def test_title_match_boost_hits_on_token_overlap():
+    """A query token appearing in the record title triggers the multiplier."""
+    rec = _rec(title="anthropic")
+    assert title_match_boost(rec, "what do you know about Anthropic?") == 6.0
+
+
+def test_title_match_boost_misses_without_overlap():
+    rec = _rec(title="cooking rice")
+    assert title_match_boost(rec, "what do you know about Anthropic?") == 1.0
+
+
+def test_title_match_boost_ignores_short_query_tokens():
+    """Tokens shorter than 3 chars are excluded so single-letter accidents
+    (e.g. 'I' or 'a' in titles) don't blanket-boost everything."""
+    rec = _rec(title="a brief note")
+    assert title_match_boost(rec, "is a thing") == 1.0
+
+
+def test_title_match_boost_case_insensitive():
+    rec = _rec(title="Anthropic Inc")
+    assert title_match_boost(rec, "ANTHROPIC research") == 6.0
 
 
 def test_memory_prose_outranks_substrate_code_with_equal_lexical():

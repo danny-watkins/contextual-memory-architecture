@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from cma.retriever.lexical import tokenize
 from cma.schemas.memory_record import MemoryRecord
 
 
@@ -61,6 +62,38 @@ def metadata_boost(record: MemoryRecord) -> float:
     if record.type in ("code", "config", "data"):
         boost -= 0.15
     return max(0.0, boost)
+
+
+def title_match_boost(record: MemoryRecord, query: str) -> float:
+    """Multiplier rewarding records whose title shares a non-trivial token with
+    the query.
+
+    Title match is the strongest, most reliable relevance signal in lexical
+    search — far more reliable than body density. Without this, a curated
+    `companies/anthropic.md` (title token "anthropic" matches query token
+    "anthropic") loses to substrate JSON configs that just happen to mention
+    "Anthropic" many times in string-literal payloads.
+
+    Returns 1.0 when no qualifying overlap exists, 6.0 when at least one
+    non-trivial query token appears as a title token (case-folded via the
+    same tokenizer the BM25 index uses, so behavior is consistent).
+
+    The multiplier is calibrated to let a memory-tier prose note with a
+    matching title beat a top-scoring substrate config that mentions the
+    query term densely in body text. In the job-tracker dogfood vault, the
+    canonical `[[anthropic]]` company note sat at raw BM25 ~0.098 against
+    shortlist configs at raw 1.0; the 6× multiplier (with the metadata-tier
+    penalty on substrate) is what flips the ranking.
+    """
+    query_tokens = set(tokenize(query))
+    # Filter out very short tokens (e.g. "i", "a") that match too liberally.
+    query_tokens = {t for t in query_tokens if len(t) >= 3}
+    if not query_tokens:
+        return 1.0
+    title_tokens = set(tokenize(record.title or ""))
+    if query_tokens & title_tokens:
+        return 6.0
+    return 1.0
 
 
 def apply_depth_decay(node_score: float, depth: int, decay: float = 0.80) -> float:

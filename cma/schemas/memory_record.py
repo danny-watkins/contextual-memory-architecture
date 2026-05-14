@@ -38,6 +38,7 @@ MemoryStatus = Literal[
     "rejected",
     "superseded",
     "archived",
+    "noise",
 ]
 VALID_STATUSES = {
     "draft",
@@ -47,6 +48,7 @@ VALID_STATUSES = {
     "rejected",
     "superseded",
     "archived",
+    "noise",
 }
 
 
