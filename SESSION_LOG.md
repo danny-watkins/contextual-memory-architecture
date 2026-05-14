@@ -326,12 +326,26 @@ User feedback during Phase 1: the activity feed shows oldest-first within each d
 
 **Fix:** Reverse the per-group event sort in the dashboard renderer (`sort(key=ts, reverse=True)`). One-line change.
 
+### Fixes shipped
+
+**Dashboard (commit `153ec7d`)** — `cma/_bundle/memory_log/dashboard_template.html`. Local-tz day grouping (Bug A), newest-first within day (Bug D), `prompt`/`stop` as first-class event types with pill colors, filter options, and stats-panel coverage (Bug B). 204 tests pass.
+
+**Retriever scoring (Bug C)** — `cma/retriever/scoring.py`. Two new clauses in `metadata_boost`:
+- `tier == "substrate"` → `boost -= 0.30`. Substrate (auto-ingested source material) ranks below curated memory notes.
+- `type in ("code", "config", "data")` → `boost -= 0.15`. Structural-content types with dense rare-keyword payloads (cover-letter prompt files, shortlist JSON) no longer win seed selection on prose queries.
+
+Combined boost values:
+- Memory prose (e.g. `[[anthropic]]`): 1.0 — full score, no penalty.
+- Memory code (rare): 0.85.
+- Substrate prose: 0.70.
+- Substrate code/config: 0.55 — the common worst case (`generate_cover_letter`, `*_greenhouse_shortlist`).
+
+8 new tests in `test_scoring.py`, including a regression test that mirrors the Phase 1 failure mode: substrate code with *higher* raw lexical (0.50) must lose to memory prose with *lower* raw lexical (0.45) at final scoring. All 212 tests pass.
+
 ### Next
 
-- Phase 1 complete. Three concrete bugs (A, B, D dashboard; C retriever) with proposed fixes.
-- Ship Bugs A + B + D as a single dashboard commit (all in the renderer; ~5-10 LoC total).
-- Ship Bug C fixes #1 + #2 (code/config down-weight + memory-tier seed boost) as a single retriever commit with a regression test that seeds the three Phase 1 prompts and asserts the expected canonical sources appear in top-K.
-- Re-run Phase 1 to confirm fixes hold before moving to Phase 2.
+- Re-run Phase 1 (Tests #1-#3) on the job-tracker install to confirm `[[anthropic]]`, shortlists, and `outcomes_summary` now appear in top-K. Probably needs a `cma index` first to rebuild graph (no schema change, but defense-in-depth).
+- If Phase 1 passes, proceed to Phase 2 (retrieval quality prompts #4-#6).
 
 ---
 

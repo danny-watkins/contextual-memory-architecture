@@ -26,8 +26,9 @@ def metadata_boost(record: MemoryRecord) -> float:
     """Multiplicative boost applied to a node's hybrid score based on metadata.
 
     Boost values follow the whitepaper defaults; a returned 1.0 means no change.
-    Negative-direction signals (superseded, stale) reduce the score; positive
-    signals (accepted decisions, human-verified, high confidence) raise it.
+    Negative-direction signals (superseded, stale, substrate, raw code/config)
+    reduce the score; positive signals (accepted decisions, human-verified,
+    high confidence) raise it.
     """
     boost = 1.0
     if record.type == "decision":
@@ -46,6 +47,19 @@ def metadata_boost(record: MemoryRecord) -> float:
             boost += 0.08
         elif record.confidence < 0.30:
             boost -= 0.10
+    # Tier penalty: substrate is auto-ingested source material (whitepaper §6.2).
+    # Curated memory notes should outrank substrate when other signals are similar,
+    # so we tilt the scale at scoring time instead of relying on the user to
+    # constantly disambiguate "the company note" from "every config that mentions
+    # the company name."
+    if record.tier == "substrate":
+        boost -= 0.30
+    # Structural-content type penalty: raw code/config/data files have dense,
+    # rare-keyword payloads (identifiers, string literals, JSON keys) that win
+    # lexical scoring on prose queries they have no business answering. Down-weight
+    # these types so a semantic prose query lands on a prose note when one exists.
+    if record.type in ("code", "config", "data"):
+        boost -= 0.15
     return max(0.0, boost)
 
 
