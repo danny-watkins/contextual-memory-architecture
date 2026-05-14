@@ -213,6 +213,38 @@ Dogfood: ran against the real job-tracker vault. Result was 36 memory + 212 subs
 
 ---
 
+## 2026-05-13 (even later) — entity_type recognition + tier in graph nodes
+
+Running migrate-tier on Danny's real job-tracker vault surfaced a misclassification problem: ~144 company/skill notes (from his `obsidian_kb/`) had been ingested as `type: documentation` (the fallback) because `_detect_type` didn't recognize the `companies/`, `skills/` folder convention. They had `entity_type: company` set as the user's semantic tag, but the migration dutifully classified `documentation → substrate` per the literal `type:` field. End result: 144 actual memory-tier notes got demoted to substrate.
+
+Four related fixes (commit forthcoming):
+
+1. **`_detect_type` learns more folders.** `companies/`, `skills/`, `people/`, `postmortems/`, `sessions/` are now recognized at ingest time and routed to the right semantic type. New installs from Obsidian-style KBs (which is most of them) will classify correctly.
+
+2. **migrate-tier honors `entity_type`.** Added `_effective_type(meta)` which prefers `entity_type:` over `type:` when both are present. This is the Obsidian-KB convention — `type` is often a CMA-internal tag (added by ingest), while `entity_type` is the user's semantic claim ("this is a company"). When they disagree, the user's intent wins.
+
+3. **migrate-tier corrects mismatches, not just blanks.** Old behavior: skip notes that already have a `tier:`. New behavior: if the existing tier disagrees with what `_effective_type` implies, rewrite and (with `--move-files`) reverse-relocate. So a substrate note that should be memory gets pulled back to `020-sources/` automatically.
+
+4. **`tier` is now a first-class field on `MemoryRecord`, the graph node, and `nodes.json`.** Previously the tier sat only in raw frontmatter — downstream consumers (graph audits, retrieval policies, Obsidian filters) couldn't see it without re-parsing the markdown. Added to `MemoryRecord` schema (`tier: str = "memory"`), surfaced in `build_graph()` and the `cma/cache/graph/nodes.json` manifest.
+
+Tests:
+- `tests/test_migrate_tier.py::test_migrate_honors_entity_type_over_type` — pin entity_type → memory routing.
+- `tests/test_migrate_tier.py::test_migrate_corrects_misclassified_substrate_back_to_memory` — verify the reverse-move from `020-substrate/` to `020-sources/` when the tier is corrected.
+- 204 total (202 → 204).
+
+Dogfood result on job-tracker: 144 moved back to memory. Final tier breakdown: 315 memory / 68 substrate. Folder layout now matches frontmatter.
+
+### Remaining hairball cause (open)
+
+After all that, the graph still shows mega-hubs. Root cause now is **159 old context_specs from before the fan-out cap landed**, averaging 47.8 outbound edges each (7,604 total). Those were written by the pre-cap `render_spec_as_vault_note` and are now historical artifacts. Three options for resolution; not yet decided:
+- Delete them (they're auto-generated, no user-authored content)
+- Archive to `011-archive/` (preserves history, removes from default views)
+- Add a `cma curator` pass that re-renders existing specs in place with the cap applied
+
+Worth deciding once before the next public demo.
+
+---
+
 ## File map cheat sheet
 
 - Engine: `cma/` (config, hooks, activity, cli, mcp/, recorder/, retriever/, storage/)

@@ -115,6 +115,60 @@ def test_migrate_tier_cli_outputs_summary(tmp_path: Path):
     assert "Next:" in result.output  # the post-run hint to reindex
 
 
+def test_migrate_honors_entity_type_over_type(tmp_path: Path):
+    """A note ingested as `type: documentation` but with `entity_type: company`
+    should land in memory tier, not substrate. This is the Obsidian-KB
+    convention many users follow."""
+    project = tmp_path / "agent"
+    runner.invoke(app, ["init", str(project)])
+    vault = project / "cma" / "vault"
+    (vault / "020-sources" / "companies").mkdir(parents=True)
+    (vault / "020-sources" / "companies" / "anthropic.md").write_text(
+        "---\n"
+        "type: documentation\n"
+        "entity_type: company\n"
+        "title: Anthropic\n"
+        "---\n\n"
+        "A company we applied to.\n",
+        encoding="utf-8",
+    )
+
+    result = migrate_vault_tiers(vault, move_files=True)
+
+    # entity_type wins — this is memory, not substrate.
+    meta = _read_meta(vault / "020-sources" / "companies" / "anthropic.md")
+    assert meta["tier"] == "memory"
+    # And the file stays in 020-sources/.
+    assert not (vault / "020-substrate" / "companies" / "anthropic.md").exists()
+
+
+def test_migrate_corrects_misclassified_substrate_back_to_memory(tmp_path: Path):
+    """A note previously migrated to substrate (because type was 'documentation')
+    that has entity_type set should be pulled back to memory and physically
+    moved from 020-substrate/ to 020-sources/ on a corrective re-run."""
+    project = tmp_path / "agent"
+    runner.invoke(app, ["init", str(project)])
+    vault = project / "cma" / "vault"
+    (vault / "020-substrate" / "companies").mkdir(parents=True)
+    (vault / "020-substrate" / "companies" / "anthropic.md").write_text(
+        "---\n"
+        "type: documentation\n"
+        "entity_type: company\n"
+        "tier: substrate\n"
+        "title: Anthropic\n"
+        "---\n\n"
+        "A company we applied to.\n",
+        encoding="utf-8",
+    )
+
+    result = migrate_vault_tiers(vault, move_files=True)
+
+    assert not (vault / "020-substrate" / "companies" / "anthropic.md").exists()
+    assert (vault / "020-sources" / "companies" / "anthropic.md").exists()
+    meta = _read_meta(vault / "020-sources" / "companies" / "anthropic.md")
+    assert meta["tier"] == "memory"
+
+
 def test_migrate_tier_cli_dry_run(tmp_path: Path):
     project = tmp_path / "agent"
     vault = _seed_vault(project)

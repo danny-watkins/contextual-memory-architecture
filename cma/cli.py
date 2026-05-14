@@ -272,6 +272,7 @@ def _run_index_build(project_path: Path, no_embeddings: bool = False) -> None:
         {
             "record_id": r.record_id,
             "type": r.type,
+            "tier": r.tier,
             "title": r.title,
             "path": r.path,
             "tags": r.tags,

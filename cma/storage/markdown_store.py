@@ -79,9 +79,14 @@ def parse_note(vault_path: Path, file_path: Path) -> MemoryRecord:
     if status not in VALID_STATUSES:
         status = "active"
 
+    tier = fm.get("tier")
+    if tier not in ("memory", "substrate"):
+        tier = "memory"
+
     return MemoryRecord(
         record_id=file_path.stem,
         type=note_type,
+        tier=tier,
         title=str(title),
         path=rel_path,
         created_at=_coerce_datetime(fm.get("created")),

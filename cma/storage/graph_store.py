@@ -25,6 +25,7 @@ def build_graph(records: list[MemoryRecord]) -> nx.DiGraph:
         g.add_node(
             rec.record_id,
             type=rec.type,
+            tier=rec.tier,
             title=rec.title,
             path=rec.path,
             status=rec.status,

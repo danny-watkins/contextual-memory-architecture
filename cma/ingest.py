@@ -228,6 +228,16 @@ def _detect_type(file_path: Path, rel_within_project: str) -> str:
             return "decision"
         if {"patterns", "pattern"} & parts_lower:
             return "pattern"
+        if {"postmortems", "postmortem"} & parts_lower:
+            return "postmortem"
+        if {"companies", "company", "orgs", "org"} & parts_lower:
+            return "company"
+        if {"skills", "skill"} & parts_lower:
+            return "skill"
+        if {"people", "person", "contacts", "contact"} & parts_lower:
+            return "person"
+        if {"sessions", "session"} & parts_lower:
+            return "session"
         if {"docs", "doc", "documentation"} & parts_lower:
             return "documentation"
         return "documentation"

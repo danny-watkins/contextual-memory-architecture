@@ -19,7 +19,24 @@ from pathlib import Path
 
 import frontmatter
 
-from cma.ingest import _classify_tier
+from cma.ingest import MEMORY_TYPES, SUBSTRATE_TYPES, _classify_tier
+
+
+def _effective_type(meta: dict) -> str | None:
+    """Pick the most informative type signal from frontmatter.
+
+    Some ingestion paths (and user conventions like Obsidian's `entity_type:`)
+    leave the real semantic type in a field other than `type:`. Honor those so
+    a company note with `entity_type: company` is recognized as memory, not
+    substrate, regardless of what the ingester wrote into `type:`.
+    """
+    semantic = meta.get("entity_type")
+    if isinstance(semantic, str) and semantic.strip():
+        return semantic.strip().lower()
+    declared = meta.get("type")
+    if isinstance(declared, str):
+        return declared.strip().lower() or None
+    return None
 
 
 @dataclass
@@ -44,12 +61,20 @@ class MigrateTierResult:
 _SKIP_FOLDERS = {"011-archive"}
 
 
-def _is_in_sources_tree(note_path: Path, vault_path: Path) -> bool:
+def _tree_root(note_path: Path, vault_path: Path) -> str | None:
     try:
         rel = note_path.resolve().relative_to(vault_path.resolve())
     except ValueError:
-        return False
-    return rel.parts and rel.parts[0] == "020-sources"
+        return None
+    return rel.parts[0] if rel.parts else None
+
+
+def _is_in_sources_tree(note_path: Path, vault_path: Path) -> bool:
+    return _tree_root(note_path, vault_path) == "020-sources"
+
+
+def _is_in_substrate_tree(note_path: Path, vault_path: Path) -> bool:
+    return _tree_root(note_path, vault_path) == "020-substrate"
 
 
 def _substrate_target(note_path: Path, vault_path: Path) -> Path:
@@ -58,13 +83,33 @@ def _substrate_target(note_path: Path, vault_path: Path) -> Path:
     return vault_path / "020-substrate" / Path(*rel.parts[1:])
 
 
+def _sources_target(note_path: Path, vault_path: Path) -> Path:
+    """Mirror the note's location under 020-sources/ instead of 020-substrate/."""
+    rel = note_path.resolve().relative_to(vault_path.resolve())
+    return vault_path / "020-sources" / Path(*rel.parts[1:])
+
+
+def _correct_tier_for_meta(meta: dict) -> str:
+    """The tier this note *should* have given everything we know about it."""
+    effective = _effective_type(meta)
+    return _classify_tier(effective) if effective else "memory"
+
+
 def migrate_vault_tiers(
     vault_path: Path,
     *,
     move_files: bool = False,
     dry_run: bool = False,
 ) -> MigrateTierResult:
-    """Walk `vault_path`, backfill `tier:` frontmatter, optionally move substrate."""
+    """Walk `vault_path`, backfill or correct `tier:` frontmatter, optionally
+    move files to match.
+
+    Smart about pre-existing tier tags: if the declared `tier:` disagrees with
+    what `entity_type:` (or `type:`) implies, the correct value wins. This is
+    how a misclassified company note (ingested as `type: documentation`,
+    tier defaulting to substrate, but really `entity_type: company`) gets
+    pulled back into memory tier on a re-run.
+    """
     vault_path = Path(vault_path).resolve()
     result = MigrateTierResult(dry_run=dry_run)
 
@@ -84,34 +129,30 @@ def migrate_vault_tiers(
             result.skipped.append((note_path, f"unreadable: {exc}"))
             continue
 
+        correct_tier = _correct_tier_for_meta(post.metadata)
         existing_tier = post.metadata.get("tier")
-        if existing_tier:
+
+        if existing_tier and existing_tier == correct_tier:
             result.already_tagged.append(note_path)
-            # If --move-files and the existing tier is substrate but the file
-            # is under 020-sources/, still relocate it. This catches partial
-            # migrations (someone edited frontmatter by hand but didn't move).
-            if (
-                move_files
-                and existing_tier == "substrate"
-                and _is_in_sources_tree(note_path, vault_path)
-            ):
-                target = _substrate_target(note_path, vault_path)
-                if not dry_run:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    note_path.rename(target)
-                result.moved.append((note_path, target))
+        else:
+            # Backfill or correct.
+            if not dry_run:
+                post["tier"] = correct_tier
+                note_path.write_text(frontmatter.dumps(post), encoding="utf-8")
+            result.backfilled.append((note_path, correct_tier))
+
+        if not move_files:
             continue
 
-        detected_type = post.metadata.get("type")
-        tier = _classify_tier(detected_type) if detected_type else "memory"
-
-        if not dry_run:
-            post["tier"] = tier
-            note_path.write_text(frontmatter.dumps(post), encoding="utf-8")
-        result.backfilled.append((note_path, tier))
-
-        if move_files and tier == "substrate" and _is_in_sources_tree(note_path, vault_path):
+        # Move the file if its current folder disagrees with its tier.
+        if correct_tier == "substrate" and _is_in_sources_tree(note_path, vault_path):
             target = _substrate_target(note_path, vault_path)
+            if not dry_run:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                note_path.rename(target)
+            result.moved.append((note_path, target))
+        elif correct_tier == "memory" and _is_in_substrate_tree(note_path, vault_path):
+            target = _sources_target(note_path, vault_path)
             if not dry_run:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 note_path.rename(target)

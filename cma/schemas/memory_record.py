@@ -53,6 +53,7 @@ VALID_STATUSES = {
 class MemoryRecord(BaseModel):
     record_id: str
     type: str = "note"
+    tier: str = "memory"  # memory | substrate; default memory for backward compat
     title: str
     path: str
     created_at: datetime | None = None
