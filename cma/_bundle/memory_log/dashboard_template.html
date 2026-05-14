@@ -21,6 +21,8 @@
     --c-index: #c084fc;
     --c-ingest: #14b8a6;
     --c-bootstrap: #f59e0b;
+    --c-prompt: #fbbf24;
+    --c-stop: #6b7280;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
@@ -128,6 +130,8 @@
   .event-pill.index     { background: rgba(192, 132, 252, 0.15); color: var(--c-index); }
   .event-pill.ingest    { background: rgba(20, 184, 166, 0.15); color: var(--c-ingest); }
   .event-pill.bootstrap { background: rgba(245, 158, 11, 0.15); color: var(--c-bootstrap); }
+  .event-pill.prompt    { background: rgba(251, 191, 36, 0.15); color: var(--c-prompt); }
+  .event-pill.stop      { background: rgba(107, 114, 128, 0.18); color: var(--c-stop); }
   .event-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .event-duration { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
   .event-artifacts { margin-top: 6px; padding-left: 0; }
@@ -219,12 +223,14 @@
     <label><input type="checkbox" id="show-low-level"> show low-level reads</label>
     <select id="filter-type">
       <option value="">all event types</option>
+      <option value="prompt">prompt</option>
       <option value="retrieve">retrieve</option>
       <option value="search">search</option>
       <option value="record">record</option>
       <option value="index">index</option>
       <option value="ingest">ingest</option>
       <option value="bootstrap">bootstrap</option>
+      <option value="stop">stop</option>
     </select>
     <select id="filter-session">
       <option value="">all days</option>
@@ -240,8 +246,27 @@
 <script type="application/json" id="payload">{{PAYLOAD_JSON}}</script>
 
 <script>
-const LOW_LEVEL_TYPES = new Set(["get_note", "get_outgoing_links", "get_backlinks", "traverse_graph", "search_by_frontmatter", "reindex"]);
-const TYPE_ORDER = ["retrieve", "search", "record", "index", "ingest", "bootstrap"];
+const LOW_LEVEL_TYPES = new Set(["get_note", "get_outgoing_links", "get_backlinks", "traverse_graph", "search_by_frontmatter", "reindex", "stop"]);
+const TYPE_ORDER = ["prompt", "retrieve", "search", "record", "index", "ingest", "bootstrap", "stop"];
+
+// Local timezone abbreviation (e.g., "PDT", "EST") — derived once at load.
+const TZ_ABBREV = (() => {
+  const parts = new Date().toLocaleTimeString("en-US", { timeZoneName: "short" }).split(" ");
+  return parts[parts.length - 1] || "local";
+})();
+
+function localDayKey(input) {
+  // YYYY-MM-DD in the viewer's local timezone. Accepts an ISO string or a Date.
+  const d = typeof input === "string" ? new Date(input) : input;
+  if (isNaN(d.getTime())) return "unknown";
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function fmtTimeHM(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
 
 const payload = JSON.parse(document.getElementById("payload").textContent);
 const events = payload.events || [];
@@ -265,16 +290,16 @@ function fmtTimeOnly(iso) {
 }
 
 function fmtDayTitle(dayKey) {
-  // dayKey is "YYYY-MM-DD". Show "Today" / "Yesterday" / long form so the
+  // dayKey is "YYYY-MM-DD" in local time. Show "Today" / "Yesterday" / long form so the
   // most-relevant rows read naturally at a glance.
   const today = new Date();
-  const todayKey = today.toISOString().slice(0, 10);
+  const todayKey = localDayKey(today);
   const yest = new Date(today); yest.setDate(today.getDate() - 1);
-  const yestKey = yest.toISOString().slice(0, 10);
+  const yestKey = localDayKey(yest);
   if (dayKey === todayKey) return `Today · ${dayKey}`;
   if (dayKey === yestKey) return `Yesterday · ${dayKey}`;
-  // Add weekday for context on older days.
-  const d = new Date(dayKey + "T12:00:00Z");
+  // Add weekday for context on older days. Use noon-local to avoid TZ rollover.
+  const d = new Date(dayKey + "T12:00:00");
   const wd = d.toLocaleDateString(undefined, { weekday: "short" });
   return `${wd} · ${dayKey}`;
 }
@@ -337,17 +362,22 @@ function renderEvent(ev) {
 }
 
 function groupByDay(events) {
-  // Group by calendar date (UTC). Process-level session_ids are kept in the
-  // JSONL for forensics but are noise in the dashboard: every CLI invocation
-  // is its own process, so they fragment a single day of work into many
+  // Group by calendar date in the viewer's local timezone. Process-level session_ids
+  // are kept in the JSONL for forensics but are noise in the dashboard: every CLI
+  // invocation is its own process, so they fragment a single day of work into many
   // tiny "sessions". A day is the unit a human actually cares about.
   const groups = new Map();
   for (const ev of events) {
-    const day = (ev.ts || "").slice(0, 10) || "unknown";
+    const day = ev.ts ? localDayKey(ev.ts) : "unknown";
     if (!groups.has(day)) groups.set(day, []);
     groups.get(day).push(ev);
   }
-  // Newest day first; events within a day stay chronological (JSONL is append-only).
+  // Newest events first within each day, so the most recent prompt sits at the top
+  // of its group (matches how humans read a live log).
+  for (const evs of groups.values()) {
+    evs.sort((a, b) => (b.ts || "").localeCompare(a.ts || ""));
+  }
+  // Newest day first.
   return [...groups.entries()].sort((a, b) => b[0].localeCompare(a[0]));
 }
 
@@ -398,9 +428,10 @@ function render() {
     });
     if (visible.length === 0) continue;
     const isActive = day === mostRecentDay;
-    const firstTime = (evs[0].ts || "").slice(11, 16);
-    const lastTime = (evs[evs.length - 1].ts || "").slice(11, 16);
-    const span = firstTime === lastTime ? firstTime : `${firstTime}–${lastTime}`;
+    // evs is sorted newest-first inside groupByDay, so evs[0] is the most recent.
+    const newestTime = fmtTimeHM(evs[0].ts);
+    const oldestTime = fmtTimeHM(evs[evs.length - 1].ts);
+    const span = newestTime === oldestTime ? newestTime : `${oldestTime}–${newestTime}`;
     const openClass = sessionStorage.getItem("day-" + day) === "closed" ? "" : "open";
     const activePill = isActive ? `<span class="session-active-pill">active</span>` : "";
     html += `
@@ -408,7 +439,7 @@ function render() {
         <div class="session-head" onclick="toggleSession('${escapeHtml(day)}')">
           <span class="session-caret">▶</span>
           <div class="session-title">${escapeHtml(fmtDayTitle(day))}</div>
-          <span class="session-meta">${visible.length} event${visible.length === 1 ? "" : "s"} · ${span} UTC</span>
+          <span class="session-meta">${visible.length} event${visible.length === 1 ? "" : "s"} · ${span} ${TZ_ABBREV}</span>
           ${activePill}
         </div>
         <div class="session-body">

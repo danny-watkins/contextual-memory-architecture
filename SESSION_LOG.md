@@ -2,7 +2,7 @@
 
 A running log of where we are in the build, so a cold-start return to this project takes minutes instead of hours.
 
-Last updated: 2026-05-13
+Last updated: 2026-05-14
 
 ---
 
@@ -242,6 +242,96 @@ After all that, the graph still shows mega-hubs. Root cause now is **159 old con
 - Add a `cma curator` pass that re-renders existing specs in place with the cap applied
 
 Worth deciding once before the next public demo.
+
+---
+
+## 2026-05-14 — Phase 1 testing pass on job-tracker install (in progress)
+
+Working through `docs/TESTING_SUITE.md` Phase 1 (smoke tests) against the real job-tracker install. Each prompt fired by the user inside Claude Code so the `UserPromptSubmit` hook runs naturally. Findings logged live; fixes to be shipped to `origin/main` per iteration-loop convention.
+
+### Test #1 — "what do you know about Anthropic?"
+
+**Expected:** Top result is `[[anthropic]]` company note (which has structured Strengths / Gaps / Skills section, `retrieve_count: 13`, `avg_fit_score: 0.8`).
+
+**Actual:** Top results were:
+1. `generate_cover_letter` (code, node_score 0.511) — cover-letter prompt template, only tangentially relevant
+2. Six `*_greenhouse_shortlist` configs — JSON files containing the literal string `"Anthropic"` as a field value
+3. Some shortlist `.json` aggregates and a numeric-ID note
+
+The dedicated `companies/anthropic.md` did **not** appear in the top fragments at all. Both `companies/anthropic.md` and `skills/anthropic.md` exist in the vault and are wikilinked from many notes — retrieval still missed them.
+
+### Test #2 — "show me jobs where I scored over 80% fit"
+
+**Expected:** Shortlist notes (filtered to ≥0.8 fit) + `outcomes_summary.md` pattern note.
+
+**Actual:**
+- `generate_cover_letter` (code, top again, score 0.502)
+- `builtin_scout` (code that contains the literal identifier `fit_score`)
+- Skill nodes `r`, `python`, `dbt`, `elt`, `javascript`, `rag` (graph-traversed from `generate_cover_letter`'s wikilinks)
+- `stripe_cover_letter`, `blueorigin_cover_letter` (more code)
+
+**Zero** shortlist notes retrieved. **Zero** `outcomes_summary.md` — even though it exists at `vault/020-sources/patterns/outcomes_summary.md`.
+
+### Root cause hypothesis (Bug C — retrieval rank quality)
+
+Two reinforcing failure modes:
+
+1. **BM25 fragment scoring rewards rare-keyword density in code/config.** Terms like `Anthropic`, `fit_score`, `cover_letter` appear as string literals or identifiers in `.py` files and JSON aggregates. Per-chunk frequency in those files dwarfs the same terms appearing in a paragraph of a structured prose note (which is "diluted" by other content). So code wins seed selection.
+2. **Graph traversal anchors on the bad seed.** Once `generate_cover_letter` is seed #1, BFS expands its wikilinks → which are *skill* nodes. The traversal never reaches `shortlist` or `outcomes_summary` because the bad seed has no edge to them.
+
+This is the concrete manifestation of Open Thread #1 ("Fragment-level scoring is BM25-only") — but worse than the thread originally framed. It's not just *which paragraph* gets picked from a good source; it's *which source* gets picked at all. Code beats prose at the source level.
+
+### Proposed fixes (Bug C)
+
+In rough order of cost/benefit:
+
+1. **Down-weight code/config nodes at seed selection.** Multiply node_score by a type prior — `code: 0.6`, `config: 0.7`, `note/memory: 1.0`. Cheap to implement, addresses the immediate symptom. Risk: hurts genuine code-search queries; mitigate by detecting code-intent queries (contains identifier-looking tokens, file extensions, etc.).
+2. **Boost `tier: memory` over `tier: substrate` in seed scoring.** We already have the tier field on graph nodes (added 2026-05-13). Multiply scores: memory ×1.0, substrate ×0.5. The user's curated memory notes should outrank auto-ingested source files for semantic queries by default.
+3. **Hybrid fragment scoring (the actual fix in Open Thread #1).** Add an embedding pass on fragments, not just on nodes. BM25 stays for keyword anchoring; cosine sim on a sentence embedding handles the prose case where the answer is paraphrased, not literal. Adds ~50-150ms per retrieve; worth it.
+4. **Backlink reinforcement.** Notes with high inbound wikilink count from `tier: memory` neighbors get a small seed bonus. `[[anthropic]]` is heavily backlinked from shortlists, sessions, etc. — that signal is currently unused at seed time.
+
+Plan: ship #1 + #2 immediately as a one-commit guardrail (small, testable). Hold #3 for its own commit with a benchmark harness over Phase 1 prompts (we now have ground-truth-expected-source pairs from the testing suite — useful as eval set). #4 after #3 lands.
+
+### Bug A — Dashboard "Today" groups by UTC, not local date
+
+Dashboard shows "Today · 2026-05-14 · 28 events · 01:13–20:08 UTC". For a PT user, 01:13 UTC on 2026-05-14 is 18:13 PT on 2026-05-13. So yesterday-evening-PT events are folded into today's row.
+
+**Fix:** Dashboard renderer groups events by `datetime.fromisoformat(ts).astimezone().date()` (local) rather than UTC date. One-line change in the renderer; render section labels with the local TZ abbreviation so it's clear what timezone we're showing.
+
+### Bug B — Collapsed Today-row chips drop `prompt`/`retrieve` events
+
+Today's row shows "28 events" but only chips `index: 8 · ingest: 1` in the collapsed preview. The other 19 are `prompt`/`retrieve`/`stop` events that the collapsed-preview chip renderer omits. From the user's POV "nothing happened" after a retrieve — but the event is in `activity.jsonl`; the row just hides it until expanded.
+
+**Fix:** Include all non-zero event types in the collapsed-preview chips, with `prompt` and `retrieve` prioritized (they're the most diagnostic — the user cares whether their queries fired). One-line filter change in the renderer.
+
+### Test #3 — "what skills am I weakest in?"
+
+**Expected:** `skills/*` notes with low `candidate_level` + `outcomes_summary.md`.
+
+**Actual:**
+1. `blueorigin_cover_letter` (code, top, 0.471)
+2. `generate_cover_letter` (code)
+3. Skill nodes `javascript`, `bash`, `mysql` — graph-traversed from cover-letter seeds, not selected on `candidate_level`
+4. `update_kb` (code)
+5. `anthropic` (first memory node this run — reached via shortlist backlinks, not relevant to the query topic)
+6. `2026-04-21_1205_greenhouse_shortlist`, `braintrust_cover_letter`, `stripe_cover_letter`
+
+**Zero** `outcomes_summary`. Skill notes appeared only as graph hops, not chosen for their `candidate_level` content.
+
+**Bug C confirmed three-for-three.** Across all three Phase 1 prompts, the top seed was code (cover-letter or scout). Graph traversal works fine; the upstream seed selection is what's broken. Mildly encouraging signal in Test #3: BFS did reach a memory note (`[[anthropic]]`) when seeded poorly — so the traversal half of the pipeline is healthy, validating that fixes #1 + #2 (down-weight code + boost memory-tier at seed selection) are the right surgical target.
+
+### Bug D — Dashboard sort order: newest events should be on top
+
+User feedback during Phase 1: the activity feed shows oldest-first within each day group, so to see what just fired you have to scroll. Should be newest-first (descending by `ts`) so the latest prompt/retrieve sits at the top of its group.
+
+**Fix:** Reverse the per-group event sort in the dashboard renderer (`sort(key=ts, reverse=True)`). One-line change.
+
+### Next
+
+- Phase 1 complete. Three concrete bugs (A, B, D dashboard; C retriever) with proposed fixes.
+- Ship Bugs A + B + D as a single dashboard commit (all in the renderer; ~5-10 LoC total).
+- Ship Bug C fixes #1 + #2 (code/config down-weight + memory-tier seed boost) as a single retriever commit with a regression test that seeds the three Phase 1 prompts and asserts the expected canonical sources appear in top-K.
+- Re-run Phase 1 to confirm fixes hold before moving to Phase 2.
 
 ---
 
